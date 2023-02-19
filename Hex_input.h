@@ -26,6 +26,7 @@
 #define INPUT_OPT_SEL				0x400
 #define	INPUT_OPT_R1				0x800
 #define INPUT_OPT_R2				0x1000
+#define INPUT_BODY_BALANCE          0x2000
 
 // Byte 3 Lx
 // Byte 4 Ly

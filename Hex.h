@@ -14,6 +14,8 @@
 #include "Hex_cfg.h"
 #include "Hex_input.h"
 #include "bluetooth.h"
+#include "pid.h"
+#include "setup.h"
 
 //#define FOOT_SENSOR
 
@@ -704,22 +706,33 @@ void BodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
   short CPR_X;  //Total X distance between the center of the body and the feet
   short CPR_Z;  //Total Z distance between the center of the body and the feet
   short CPR_Y;  //Total Y distance between the center of the body and the feet
+  double bodyBalance[3];
+  pid_update(bodyBalance, 3);
 
+#ifdef DEBUG
+  Serial.print(F("angle BodyIK"));
+  Serial.print(F("\t"));
+  Serial.print(bodyBalance[0]);
+  Serial.print(F("\t"));
+  Serial.print(bodyBalance[1]);
+  Serial.print(F("\t"));
+  Serial.println(bodyBalance[2]);
+#endif  // DEBUG
 
   CPR_X = (short)pgm_read_word(&cOffsetX[BodyIKLeg]) + PosX + Hex.BodyRotOffsetX;
   CPR_Y = PosY + Hex.BodyRotOffsetY;
   CPR_Z = (short)pgm_read_word(&cOffsetZ[BodyIKLeg]) + PosZ + Hex.BodyRotOffsetZ;
 
-  GetSinCos(Hex.BodyRotX + TotalXBal1);
+  GetSinCos(Hex.BodyRotX + TotalXBal1 + bodyBalance[0]);
   SinG4 = sin4;
   CosG4 = cos4;
 
-  GetSinCos(Hex.BodyRotZ + TotalZBal1);
+  GetSinCos(Hex.BodyRotZ + TotalZBal1 + bodyBalance[1]);
   SinB4 = sin4;
   CosB4 = cos4;
 
 
-  GetSinCos(Hex.BodyRotY + (RotationY * c1DEC) + TotalYBal1);
+  GetSinCos(Hex.BodyRotY + (RotationY * c1DEC) + TotalYBal1 + bodyBalance[2]);
 
   SinA4 = sin4;
   CosA4 = cos4;
@@ -934,7 +947,7 @@ void StepControlServo(uint16_t slave_addr, byte channel, byte ServoNr, int Servo
 
 void ControlServo() {
   int LegNr;
-#if 1
+#ifndef DEBUG
   for (LegNr = 0; LegNr < 6; ++LegNr) {
     switch (LegNr) {
       case 0:  //RR
@@ -975,39 +988,57 @@ void ControlServo() {
   for (LegNr = 0; LegNr < 6; ++LegNr) {
     switch (LegNr) {
       case 0:  //RR
-        Serial.println("RR");
-        Serial.println(CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("RR"));
+        Serial.print(F("\t"));
+        Serial.print(CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       case 1:  //RM
-        Serial.println("RM");
-        Serial.println(CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("RM"));
+        Serial.print(F("\t"));
+        Serial.print(CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       case 2:  //RF
-        Serial.println("RF");
-        Serial.println(CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("RF"));
+        Serial.print(F("\t"));
+        Serial.print(CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       case 3:  //LR
-        Serial.println("LR");
-        Serial.println(-CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("LR"));
+        Serial.print(F("\t"));
+        Serial.print(-CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       case 4:  //LM
-        Serial.println("LM");
-        Serial.println(-CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("LM"));
+        Serial.print(F("\t"));
+        Serial.print(-CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       case 5:  //LF
-        Serial.println("LF");
-        Serial.println(-CoxaAngle[LegNr]);
-        Serial.println(-FemurAngle[LegNr]);
+        Serial.print(F("LF"));
+        Serial.print(F("\t"));
+        Serial.print(-CoxaAngle[LegNr]);
+        Serial.print(F("\t"));
+        Serial.print(-FemurAngle[LegNr]);
+        Serial.print(F("\t"));
         Serial.println(-TibiaAngle[LegNr]);
         break;
       default:
@@ -1094,6 +1125,10 @@ void CommandInput() {
             break;
         }
       }
+      // if (BUTTON_PRESSED(dwButton, INPUT_BODY_BALANCE))
+      // {
+      //   Hex.bBodyBalanceMode = !Hex.bBodyBalanceMode;
+      // }
 
       if (BUTTON_PRESSED(dwButton, INPUT_TOGGLE_BALANCE))
         Hex.bBalanceMode = !Hex.bBalanceMode;
@@ -1238,14 +1273,25 @@ void CommandInput() {
 
 
 void setup() {
-  // Serial.begin(9600);
+#ifdef DEBUG
+  Serial.begin(9600);
+#endif
   PMWServoDriver_init();
-  bluetooth_init();
+  bluetooth_init(false);
   Initialize();
   delay(10);
   CheckAngles();
   ControlServo();
-  delay(500);
+  delay(200);
+  pid_init();
+  delay(100);
+  pinMode(LED_BUILTIN, OUTPUT);
+  for (int i = 5; i > 0; --i) {
+    digitalWrite(LED_BUILTIN, LOW);   // turn the LED on (HIGH is the voltage level)
+    delay(100);                       // wait for a second
+    digitalWrite(LED_BUILTIN, HIGH);  // turn the LED off by making the voltage LOW
+    delay(100);                       // wait for a second
+  }
 }
 
 
@@ -1259,10 +1305,6 @@ void loop() {
     dataReady = 0;
   }
 
-  //        if (Hex.bAdjustLegPositions)
-  //            AdjustLegPositionsToBodyHeight();
-  //Single leg control
-  //        if (Hex.OperationMode == MODE_SINGLE_LEG)
   SingleLegControl();
 
   //Gait
@@ -1360,8 +1402,5 @@ void loop() {
     }
   }
 
-  //Get endtime and calculate wait time
-  //        lTimeWaitEnd = lTimerStart + PrevServoMoveTime;
-  //            g_ServoDriver.CommitServoDriver(ServoMoveTime);
   PrevServoMoveTime = ServoMoveTime;
 }

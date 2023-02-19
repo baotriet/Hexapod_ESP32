@@ -6,6 +6,7 @@
 
 #include "Wire.h"
 #include <MPU6050_light.h>
+#include "setup.h"
 
 MPU6050 mpu(Wire);
 
@@ -21,5 +22,5 @@ void mpu6050_init(bool isInit) {
   delay(1000);
   // mpu.upsideDownMounting = true; // uncomment this line if the MPU6050 is mounted upside-down
   mpu.calcOffsets(); // gyro and accelero
-  Serial.println("Done!\n");
+  Serial.println(F("Done!\n"));
 }

@@ -5,17 +5,14 @@
 
 SoftwareSerial HexPort = SoftwareSerial(HEXPORT_RX, HEXPORT_TX);
 
-void bluetooth_init() {
+void bluetooth_init(bool needConnect) {
   // Define pin modes for TX and RX
   pinMode(HEXPORT_RX, INPUT);
   pinMode(HEXPORT_TX, OUTPUT);
   HexPort.begin(9600);
-  if (!HexPort) {  // If the object did not initialize, then its configuration is invalid
-    while (1) {  // Don't continue with invalid configuration
-      delay(1000);
-    }
+  while (!HexPort && needConnect) {  // If the object did not initialize, then its configuration is invalid
   }
-  Serial.println("bl done");
+  Serial.println(F("bl done"));
 }
 
 
