@@ -4,23 +4,16 @@
  * License: MIT
  */
 
-#include "Wire.h"
+#ifndef MPU6050_H_   /* Include guard */
+#define MPU6050_H_
+
+#include "stdbool.h"
 #include <MPU6050_light.h>
+#include "Wire.h"
 #include "setup.h"
 
-MPU6050 mpu(Wire);
+void mpu6050_init(bool isInit);
+float mpu6050_getAngle(char Axis);
+void mpu6050_update();
 
-void mpu6050_init(bool isInit) {
-  Wire.begin();
-  
-  byte status = mpu.begin();
-  Serial.print(F("MPU6050 status: "));
-  Serial.println(status);
-  while(status!=0 && isInit){ } // stop everything if could not connect to MPU6050
-  
-  Serial.println(F("Calculating offsets, do not move MPU6050"));
-  delay(1000);
-  // mpu.upsideDownMounting = true; // uncomment this line if the MPU6050 is mounted upside-down
-  mpu.calcOffsets(); // gyro and accelero
-  Serial.println(F("Done!\n"));
-}
+#endif // MPU6050_H_

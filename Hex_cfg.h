@@ -84,7 +84,7 @@
 #define CHexInitXZ 70
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))    // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866))  // sin(60) = .866
-#define CHexInitY 50                                     //Typical standing height (body above ground) in [mm]
+#define CHexInitY 80                                     //Typical standing height (body above ground) in [mm]
 
 #define cRRInitPosX CHexInitXZCos60  //Start positions of the Right Rear leg
 #define cRRInitPosY CHexInitY
@@ -215,7 +215,7 @@
 // Lets try some multi leg positions depending on height settings.
 #if 1  // Start first without...
 #define CNT_HEX_INITS 2
-#define MAX_BODY_Y 110
+#define MAX_BODY_Y 100
 
 #ifdef DEFINE_HEX_GLOBALS
 const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 50 };

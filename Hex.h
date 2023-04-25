@@ -16,17 +16,16 @@
 #include "bluetooth.h"
 #include "pid.h"
 #include "setup.h"
+#include "wifi.h"
 
 //#define FOOT_SENSOR
 
 #ifndef BALANCE_DELAY
-#define BALANCE_DELAY 100
+#define BALANCE_DELAY 50
 #endif
 
-int tempServoAngle[19] = { 0 };
-
-byte reData[7];
-boolean dataReady;
+static byte *reData;
+static bool dataReady;
 //Min / imax values
 const short cCoxaMin1[] PROGMEM = {
   cRRCoxaMin1, cRMCoxaMin1, cRFCoxaMin1, cLRCoxaMin1, cLMCoxaMin1, cLFCoxaMin1
@@ -166,7 +165,7 @@ long TotalZBal1;
 
 //Single leg control
 byte PrevSelectedLeg;
-boolean AllDown;
+bool AllDown;
 
 //Gait
 short NomGaitSpeed;
@@ -193,7 +192,7 @@ static short g_BodyYShift;
 static short g_BodyYOffset;
 
 const byte BalanceDivFactor = 6;
-boolean fWalking;  //1 if the robot are walking
+bool fWalking;              //1 if the robot are walking
 byte bExtraCycle;  //Forcing some extra timed cycles for avoiding
 
 // Time
@@ -228,17 +227,18 @@ struct RobotStatus {
   long SLLegX;
   long SLLegY;
   long SLLegZ;
-  boolean bSLHold;  //Single leg control mode
+  bool bSLHold;  //Single leg control mode
 
   //Grip
   long GripPosition;
 
   //Balance
-  boolean bBalanceMode;
+  bool bBalanceMode;
+  bool bBodyBalanceMode;
 
   //Timing
   byte InputTimeDelay;    //Delay that depends on the input to get the "sneaking" effect
-  word SpeedControl;      //Adjustible Delay
+  word SpeedControl;               //Adjustible Delay
   byte ForceGaitStepCnt;  // new to allow us to force a step even when not moving
   byte OperationMode;
 
@@ -257,10 +257,10 @@ byte readyData = 0;
 const byte cTravelDeadZone = 4;
 
 //*************************************************************************
-// int min(int a, int b) {
+// int _min(int a, int b) {
 //   return a <= b ? a : b;
 // }
-// int max(int a, int b) {
+// int _max(int a, int b) {
 //   return a >= b ? a : b;
 // }
 //****************************************************************************
@@ -532,14 +532,14 @@ void GetSinCos(short AngleDeg1) {
 //cos4        - Input Cosinus
 //AngleRad4     - Output Angle in AngleRad4
 int GetArcCos(short cos4) {
-  boolean NegativeValue /*:1*/;
+  bool NegativeValue /*:1*/;
   if (cos4 < 0) {
     cos4 = -cos4;
     NegativeValue = 1;
   } else
     NegativeValue = 0;
 
-  cos4 = min(cos4, c4DEC);
+  cos4 = _min(cos4, c4DEC);
 
   if ((cos4 >= 0) && (cos4 < 9000)) {
     AngleRad4 = (byte)pgm_read_byte(&GetACos[cos4 / 79]);
@@ -706,10 +706,14 @@ void BodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
   short CPR_X;  //Total X distance between the center of the body and the feet
   short CPR_Z;  //Total Z distance between the center of the body and the feet
   short CPR_Y;  //Total Y distance between the center of the body and the feet
-  double bodyBalance[3];
-  pid_update(bodyBalance, 3);
+  double bodyBalance[3] = { 0 };
+#ifdef MPU_ENABLED
+  if (Hex.bBodyBalanceMode) {
+    pid_update(bodyBalance, 3);
+  }
+#endif  //MPU_ENABLED
 
-#ifdef DEBUG
+#ifdef DEBUG_MPU
   Serial.print(F("angle BodyIK"));
   Serial.print(F("\t"));
   Serial.print(bodyBalance[0]);
@@ -717,7 +721,7 @@ void BodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
   Serial.print(bodyBalance[1]);
   Serial.print(F("\t"));
   Serial.println(bodyBalance[2]);
-#endif  // DEBUG
+#endif  // DEBUG_MPU
 
   CPR_X = (short)pgm_read_word(&cOffsetX[BodyIKLeg]) + PosX + Hex.BodyRotOffsetX;
   CPR_Y = PosY + Hex.BodyRotOffsetY;
@@ -732,7 +736,7 @@ void BodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
   CosB4 = cos4;
 
 
-  GetSinCos(Hex.BodyRotY + (RotationY * c1DEC) + TotalYBal1 + bodyBalance[2]);
+  GetSinCos(Hex.BodyRotY + (RotationY * c1DEC) + TotalYBal1);
 
   SinA4 = sin4;
   CosA4 = cos4;
@@ -805,14 +809,14 @@ void LegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte LegIKLegNr
 void CheckAngles(void) {
   int LegNr;
   for (LegNr = 0; LegNr < NUMBER_OF_LEGS; ++LegNr) {
-    CoxaAngle[LegNr] = min(max(CoxaAngle[LegNr], (short)pgm_read_word(&cCoxaMin1[LegNr])),
-                           (short)pgm_read_word(&cCoxaMax1[LegNr]))
+    CoxaAngle[LegNr] = _min(_max(CoxaAngle[LegNr], (short)pgm_read_word(&cCoxaMin1[LegNr])),
+                            (short)pgm_read_word(&cCoxaMax1[LegNr]))
                        + (short)pgm_read_word(&CoxaAngleOffset[LegNr]);
-    FemurAngle[LegNr] = min(max(FemurAngle[LegNr], (short)pgm_read_word(&cFemurMin1[LegNr])),
-                            (short)pgm_read_word(&cFemurMax1[LegNr]))
+    FemurAngle[LegNr] = _min(_max(FemurAngle[LegNr], (short)pgm_read_word(&cFemurMin1[LegNr])),
+                             (short)pgm_read_word(&cFemurMax1[LegNr]))
                         + (short)pgm_read_word(&FemurAngleOffset[LegNr]);
-    TibiaAngle[LegNr] = min(max(TibiaAngle[LegNr], (short)pgm_read_word(&cTibiaMin1[LegNr])),
-                            (short)pgm_read_word(&cTibiaMax1[LegNr]))
+    TibiaAngle[LegNr] = _min(_max(TibiaAngle[LegNr], (short)pgm_read_word(&cTibiaMin1[LegNr])),
+                             (short)pgm_read_word(&cTibiaMax1[LegNr]))
                         + (short)pgm_read_word(&TibiaAngleOffset[LegNr]);
   }
 }
@@ -848,6 +852,7 @@ void Initialize() {
 
   Hex.GaitType = 1;
   Hex.bBalanceMode = 0;
+  Hex.bBodyBalanceMode = 0;
   Hex.LegLiftHeight = 50;
   Hex.ForceGaitStepCnt = 0;  // added to try to adjust starting positions depending on height...
   Hex.GaitStep = 1;
@@ -860,7 +865,7 @@ void Initialize() {
   Hex.bDblTravel = 0;
   Hex.bDoubleHeight = 0;
 
-  Hex.SpeedControl = 100;
+  Hex.SpeedControl = 50;
 
   g_BodyYOffset = 0;
   g_BodyYShift = 0;
@@ -939,15 +944,12 @@ void AdjustLegPositionsToBodyHeight(void) {
 }
 
 void StepControlServo(uint16_t slave_addr, byte channel, byte ServoNr, int ServoAngle) {
-  if (R_DRIVER == slave_addr)
-    pwmRight.setPWM(channel, 0, map(ServoAngle, -900, 900, MIN_PULSE, MAX_PULSE));
-  else if (L_DRIVER == slave_addr)
-    pwmLeft.setPWM(channel, 0, map(ServoAngle, -900, 900, MIN_PULSE, MAX_PULSE));
+  PMWServoDriver_set(slave_addr, channel, map(ServoAngle, -900, 900, MIN_PULSE, MAX_PULSE));
 }
 
 void ControlServo() {
   int LegNr;
-#ifndef DEBUG
+#ifndef DEBUG_LEG
   for (LegNr = 0; LegNr < 6; ++LegNr) {
     switch (LegNr) {
       case 0:  //RR
@@ -961,9 +963,9 @@ void ControlServo() {
         StepControlServo(R_DRIVER, 5, 5, -TibiaAngle[LegNr]);
         break;
       case 2:  //RF
-        StepControlServo(R_DRIVER, 0, 6, CoxaAngle[LegNr]);
+        StepControlServo(R_DRIVER, 2, 6, CoxaAngle[LegNr]);
         StepControlServo(R_DRIVER, 1, 7, -FemurAngle[LegNr]);
-        StepControlServo(R_DRIVER, 2, 8, -TibiaAngle[LegNr]);
+        StepControlServo(R_DRIVER, 0, 8, -TibiaAngle[LegNr]);
         break;
       case 3:  //LR
         StepControlServo(L_DRIVER, 0, 9, -CoxaAngle[LegNr]);
@@ -984,7 +986,7 @@ void ControlServo() {
         break;
     }
   }
-#else  //DEBUG
+#else   //DEBUG_LEG
   for (LegNr = 0; LegNr < 6; ++LegNr) {
     switch (LegNr) {
       case 0:  //RR
@@ -1045,7 +1047,7 @@ void ControlServo() {
         break;
     }
   }
-#endif
+#endif  // DEBUG_LEG
 }
 
 void GripHand(int GripPos) {
@@ -1067,13 +1069,12 @@ void HexOFF(void) {
   // Hex.SelectedLeg = 255;
   // Hex.bHexON = 0;
   // AdjustLegPositionsToBodyHeight();  // Put main workings into main program file
-  Initialize();
-  delay(10);
-  CheckAngles();
-  ControlServo();
-  delay(500);
-  pwmRight.sleep();
-  pwmLeft.sleep();
+  // Initialize();
+  // delay(10);
+  // CheckAngles();
+  // ControlServo();
+  // delay(500);
+  PMWServoDriver_goSleep();
 }
 void CommandInput() {
   uint16_t checksum;
@@ -1125,10 +1126,9 @@ void CommandInput() {
             break;
         }
       }
-      // if (BUTTON_PRESSED(dwButton, INPUT_BODY_BALANCE))
-      // {
-      //   Hex.bBodyBalanceMode = !Hex.bBodyBalanceMode;
-      // }
+      if (BUTTON_PRESSED(dwButton, INPUT_BODY_BALANCE)) {
+        Hex.bBodyBalanceMode = !Hex.bBodyBalanceMode;
+      }
 
       if (BUTTON_PRESSED(dwButton, INPUT_TOGGLE_BALANCE))
         Hex.bBalanceMode = !Hex.bBalanceMode;
@@ -1164,8 +1164,8 @@ void CommandInput() {
 
       if (BUTTON_PRESSED(dwButton, INPUT_SPEED_DOWN)) {
         Hex.SpeedControl += 50;
-        if (Hex.SpeedControl > 500) {
-          Hex.SpeedControl = 500;
+        if (Hex.SpeedControl > 200) {
+          Hex.SpeedControl = 200;
         }
       }
 
@@ -1256,9 +1256,9 @@ void CommandInput() {
           Hex.bSLHold = !Hex.bSLHold;
         }
       }
-      Hex.InputTimeDelay = 128 - max(max(abs(lx - 128), abs(ly - 128)), abs(rx - 128));
+      Hex.InputTimeDelay = 128 - _max(_max(abs(lx - 128), abs(ly - 128)), abs(rx - 128));
     }
-    Hex.BodyPosY = min(max(g_BodyYOffset + g_BodyYShift, 0), MAX_BODY_Y);
+    Hex.BodyPosY = _min(_max(g_BodyYOffset + g_BodyYShift, 0), MAX_BODY_Y);
     if (Hex.bAdjustLegPositions) {
       AdjustLegPositionsToBodyHeight();
     }
@@ -1277,14 +1277,22 @@ void setup() {
   Serial.begin(9600);
 #endif
   PMWServoDriver_init();
-  bluetooth_init(false);
-  Initialize();
   delay(10);
+#ifdef BLUETOOTH_ENABLED
+  bluetooth_init(false);
+  delay(10);
+#endif  //BLUETOOTH_ENABLED
+#ifdef WIFI_ENABLED
+  wifi_init();
+#endif  //WIFI_ENABLED
+#ifdef MPU_ENABLED
+  pid_init();
+  delay(100);
+#endif  //MPU_ENABLED
+  Initialize();
   CheckAngles();
   ControlServo();
   delay(200);
-  pid_init();
-  delay(100);
   pinMode(LED_BUILTIN, OUTPUT);
   for (int i = 5; i > 0; --i) {
     digitalWrite(LED_BUILTIN, LOW);   // turn the LED on (HIGH is the voltage level)
@@ -1299,7 +1307,20 @@ void loop() {
   //Start time
   uint32_t lTimeWaitEnd;
   lTimerStart = millis();
+#ifdef BLUETOOTH_ENABLED
   dataReady = bluetooth_prepareData(reData);
+#else
+  dataReady = false;
+#endif  //BLUETOOTH_ENABLED
+
+#ifdef WIFI_ENABLED
+  wifi_update();
+  dataReady = wifi_dataReady();
+  reData = wifi_subsData();
+#else
+  dataReady = false;
+#endif  //WIFI_ENABLED
+
   if (dataReady) {
     CommandInput();
     dataReady = 0;
@@ -1362,7 +1383,12 @@ void loop() {
   //Check mechanical limits
   CheckAngles();
 
-  if (Hex.bHexON) {
+#ifndef DEBUG_ON
+  if (Hex.bHexON)
+#else
+  if (1)
+#endif  // DEBUG_ON
+  {
     //Drive Servos
     //Calculate Servo Move time
     if ((abs(Hex.TravelLengthX) > cTravelDeadZone) || (abs(Hex.TravelLengthZ) > cTravelDeadZone) || (abs(Hex.TravelRotationY * 2) > cTravelDeadZone)) {
