@@ -11,3 +11,6 @@
 // #define BLUETOOTH_ENABLED
 #define MPU_ENABLED
 #define WIFI_ENABLED
+
+#define WIFI_SSID "Zyxel_FAD7"
+#define WIFI_PSSW "C3pbwWhdfYrbC"

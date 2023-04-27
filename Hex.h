@@ -16,7 +16,8 @@
 #include "bluetooth.h"
 #include "pid.h"
 #include "setup.h"
-#include "wifi.h"
+#include "mqtt.h"
+#include "http.h"
 
 //#define FOOT_SENSOR
 
@@ -1095,13 +1096,13 @@ void CommandInput() {
     byte rx = (byte)reData[5];
     byte ry = (byte)reData[6];
     Serial.print(dwButton);
-    Serial.print(" ");
+    Serial.print(F(" "));
     Serial.print(lx);
-    Serial.print(" ");
+    Serial.print(F(" "));;
     Serial.print(ly);
-    Serial.print(" ");
+    Serial.print(F(" "));
     Serial.print(rx);
-    Serial.print(" ");
+    Serial.print(F(" "));
     Serial.println(ry);
     // Turn ON/OFF
     if (BUTTON_PRESSED(dwButton, INPUT_TOGGLE_ON_OFF)) {
@@ -1292,7 +1293,7 @@ void setup() {
   delay(10);
 #endif  //BLUETOOTH_ENABLED
 #ifdef WIFI_ENABLED
-  wifi_init();
+  mqtt_init();
   delay(3000);
 #endif  //WIFI_ENABLED
 #ifdef MPU_ENABLED
@@ -1324,15 +1325,15 @@ void loop() {
 #endif  //BLUETOOTH_ENABLED
 
 #ifdef WIFI_ENABLED
-  wifi_update();
-  dataReady = wifi_dataReady();
-  reData = wifi_subsData();
+  mqtt_update();
+  dataReady = mqtt_dataReady();
+  reData = mqtt_inputData();
 #ifdef DEBUG_WIFI_MQTT
   Serial.println(dataReady);
-  Serial.print("inputData: ");
+  Serial.print(F("inputData: "));
   for (int i = 0; i < 7; i++) {
     Serial.print(reData[i]);
-    Serial.print(" ");
+    Serial.print(F(" "));
   }
   Serial.println();
 #endif  // DEBUG_WIFI_MQTT
