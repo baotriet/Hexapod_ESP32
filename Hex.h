@@ -192,7 +192,7 @@ static short g_BodyYShift;
 static short g_BodyYOffset;
 
 const byte BalanceDivFactor = 6;
-bool fWalking;              //1 if the robot are walking
+bool fWalking;     //1 if the robot are walking
 byte bExtraCycle;  //Forcing some extra timed cycles for avoiding
 
 // Time
@@ -238,7 +238,7 @@ struct RobotStatus {
 
   //Timing
   byte InputTimeDelay;    //Delay that depends on the input to get the "sneaking" effect
-  word SpeedControl;               //Adjustible Delay
+  word SpeedControl;      //Adjustible Delay
   byte ForceGaitStepCnt;  // new to allow us to force a step even when not moving
   byte OperationMode;
 
@@ -1094,10 +1094,19 @@ void CommandInput() {
     byte ly = (byte)reData[4];
     byte rx = (byte)reData[5];
     byte ry = (byte)reData[6];
+    Serial.print(dwButton);
+    Serial.print(" ");
+    Serial.print(lx);
+    Serial.print(" ");
+    Serial.print(ly);
+    Serial.print(" ");
+    Serial.print(rx);
+    Serial.print(" ");
+    Serial.println(ry);
     // Turn ON/OFF
     if (BUTTON_PRESSED(dwButton, INPUT_TOGGLE_ON_OFF)) {
       if (Hex.bHexON) {
-        HexOFF();
+        //HexOFF();
       } else {
         Hex.bHexON = 1;
         Hex.bAdjustLegPositions = 1;
@@ -1284,6 +1293,7 @@ void setup() {
 #endif  //BLUETOOTH_ENABLED
 #ifdef WIFI_ENABLED
   wifi_init();
+  delay(3000);
 #endif  //WIFI_ENABLED
 #ifdef MPU_ENABLED
   pid_init();
@@ -1317,14 +1327,27 @@ void loop() {
   wifi_update();
   dataReady = wifi_dataReady();
   reData = wifi_subsData();
+#ifdef DEBUG_WIFI_MQTT
+  Serial.println(dataReady);
+  Serial.print("inputData: ");
+  for (int i = 0; i < 7; i++) {
+    Serial.print(reData[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+#endif  // DEBUG_WIFI_MQTT
 #else
   dataReady = false;
 #endif  //WIFI_ENABLED
-
+#ifdef WIFI_MQTT_SINGLE_PACKET
   if (dataReady) {
-    CommandInput();
     dataReady = 0;
+    CommandInput();
   }
+#else
+  CommandInput();
+#endif // WIFI_MQTT_SINGLE_PACKET
+
 
   SingleLegControl();
 
