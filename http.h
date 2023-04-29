@@ -11,5 +11,7 @@ void http_update();
 void http_parseData();
 byte *http_inputData();
 bool http_dataReady();
+void http_setDataReady(bool dataStatus);
+void http_resetInputData();
 
 #endif // HTTP_H_

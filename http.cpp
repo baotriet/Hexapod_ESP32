@@ -14,8 +14,8 @@ void http_init()
     WiFi.begin(WIFI_SSID, WIFI_PSSW);
     while (WiFi.status() != WL_CONNECTED)
     {
-#ifdef DEBUG_HTTP
         delay(1000);
+#ifdef DEBUG_HTTP
         Serial.println(F("Connecting to WiFi..."));
 #endif // DEBUG_HTTP
     }
@@ -25,7 +25,7 @@ void http_init()
     Serial.println(WiFi.localIP());
 #endif // DEBUG_HTTP
     // Start the server
-    server.on("/values", HTTP_POST, http_parseData);
+    server.on("/values/", HTTP_POST, http_parseData);
     server.begin();
 }
 
@@ -36,27 +36,32 @@ void http_parseData()
         DeserializationError error = deserializeJson(doc, server.arg("plain"));
         if (error)
         {
+#ifdef DEBUG_HTTP
             Serial.print(F("deserializeJson() failed: "));
             Serial.println(error.f_str());
+#endif // DEBUG_HTTP
             return;
         }
+#ifdef DEBUG_HTTP
         Serial.print(F("Values received: "));
-        for (int i = 1; i <= 7; i++)
+#endif // DEBUG_HTTP
+        for (int i = 0; i < 7; i++)
         {
             String key = "value" + String(i);
             httpInputData[i] = doc[key];
+#ifdef DEBUG_HTTP
             Serial.print(httpInputData[i]);
-            if (i < 7)
-            {
-                Serial.print(F(", "));
-            }
+#endif // DEBUG_HTTP
         }
-        httpDataReady = true;
+#ifdef DEBUG_HTTP
         Serial.println();
+#endif // DEBUG_HTTP
     }
 
     // Send the response
     server.send(200, "text/plain", "Values received successfully");
+    // server.close();
+    httpDataReady = true;
 }
 
 void http_update()
@@ -72,4 +77,14 @@ byte *http_inputData()
 bool http_dataReady()
 {
     return httpDataReady;
+}
+
+void http_setDataReady(bool dataStatus)
+{
+    httpDataReady = dataStatus;
+}
+
+void http_resetInputData()
+{
+    memset(httpInputData, 0, sizeof(httpInputData));
 }
