@@ -2,7 +2,8 @@
 #define BLUETOOTH_H_
 
 #include "stdbool.h"
-#include <SoftwareSerial.h>
+#include "setup.h"
+#include "BluetoothSerial.h"
 
 void bluetooth_init(bool needConnect);
 bool bluetooth_prepareData(byte *inputData);

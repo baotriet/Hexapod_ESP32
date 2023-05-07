@@ -4,7 +4,7 @@
 #define MQTT_USER "hexMQTT"
 #define MQTT_PSSW "baotriet11094"
 #define MQTT_TOPIC "hex/command"
-// #define WIFI_MQTT_SINGLE_PACKET
+#define WIFI_MQTT_SINGLE_PACKET
 #define MQTT_BROKER "broker.mqtt-dashboard.com"
 
 #ifndef WIFI_MQTT_SINGLE_PACKET
@@ -15,18 +15,11 @@ int numTopic = sizeof(mqttTopic) / sizeof(mqttTopic[0]);
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
-static bool mqttDataReady = 0;
+static bool mqttDataReady = false;
 static byte mqttInputData[7];
 
 void mqtt_init()
 {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PSSW);
-
-#ifdef DEBUG_WIFI_MQTT
-  Serial.println(myIP);
-#endif // DEBUG_WIFI_MQTT
-
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   mqttClient.setCallback(mqtt_callback);
   mqtt_connect2mqtt();
@@ -87,11 +80,7 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length)
   }
   if (i == 7)
   {
-    mqttDataReady = 1;
-  }
-  else
-  {
-    mqttDataReady = 0;
+    mqttDataReady = true;
   }
 #else
   for (int i = 0; i < numTopic; i++)
@@ -140,4 +129,9 @@ void mqtt_update()
     mqtt_connect2mqtt();
   }
   mqttClient.loop();
+}
+
+void mqtt_setDataReady(bool dataStatus)
+{
+  mqttDataReady = dataStatus;
 }

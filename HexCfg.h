@@ -1,12 +1,12 @@
 /*
- * Hex_cfg.h
+ * HexCfg.h
  *
  *  Created on: Feb 11, 2023
  *      Author: baotriet
  */
 
-#ifndef HEX_CFG_H_
-#define HEX_CFG_H_
+#ifndef HEXCFG_H_
+#define HEXCFG_H_
 
 #define LED_RED GPIO_PIN_1
 #define LED_GREEN GPIO_PIN_2
@@ -251,4 +251,4 @@ const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 50, 100, 100, -50, 100, 
 // Left: Up   Down       Right: Up + Down -
 const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -100, 0, 0, -150, 100, 200 }; //reverse left
 
-#endif /* HEX_CFG_H_ */
+#endif /* HEXCFG_H_ */

@@ -3,13 +3,10 @@
 #define HEXPORT_RX 2
 #define HEXPORT_TX 3
 
-SoftwareSerial HexPort = SoftwareSerial(HEXPORT_RX, HEXPORT_TX);
+BluetoothSerial HexPort;
 
 void bluetooth_init(bool needConnect) {
-  // Define pin modes for TX and RX
-  pinMode(HEXPORT_RX, INPUT);
-  pinMode(HEXPORT_TX, OUTPUT);
-  HexPort.begin(9600);
+  HexPort.begin("ESP32-HEX");
   while (!HexPort && needConnect) {  // If the object did not initialize, then its configuration is invalid
   }
 #ifdef DEBUG_BLUETOOTH

@@ -1,5 +1,13 @@
+#ifndef SETUP_H_   /* Include guard */
+#define SETUP_H_
 
-// #define DEBUG
+#if ARDUINO >= 100
+  #include "Arduino.h"
+#else
+  #include "WProgram.h"
+#endif
+
+#define DEBUG
 // #define DEBUG_PID
 // #define DEBUG_LEG
 // #define DEBUG_ON
@@ -7,13 +15,20 @@
 // #define DEBUG_BLUETOOTH
 // #define DEBUG_MPU
 // #define DEBUG_PWM
-// #define DEBUG_INPUT_DATA
-// #define DEBUG_HTTP
+#define DEBUG_INPUT_DATA
+//#define DEBUG_HTTP_DATA
+// #define DEBUG_CAMERA
+// #define DEBUG_WIFI
 
 // #define BLUETOOTH_ENABLED
-#define MPU_ENABLED
 // #define MQTT_ENABLED
 #define HTTP_ENABLED
+#define CAMERA_ENABLED
+#define MPU_ENABLED
 
-#define WIFI_SSID "Zyxel_FAD7"
-#define WIFI_PSSW "C3pbwWhdfYrbC"
+#ifdef CAMERA_ENABLED
+#define CAMERA_MODEL_AI_THINKER
+#endif // CAMERA_ENABLED
+
+
+#endif // SETUP_H_

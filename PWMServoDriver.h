@@ -10,7 +10,7 @@
 
 #include <Adafruit_PWMServoDriver.h>
 #include <Wire.h>
-#include "Hex_cfg.h"
+#include "HexCfg.h"
 #include "setup.h"
 
 void PMWServoDriver_init();
