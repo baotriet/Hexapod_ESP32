@@ -7,7 +7,7 @@
   #include "WProgram.h"
 #endif
 
-#define DEBUG
+// #define DEBUG
 // #define DEBUG_PID
 // #define DEBUG_LEG
 // #define DEBUG_ON
@@ -15,8 +15,8 @@
 // #define DEBUG_BLUETOOTH
 // #define DEBUG_MPU
 // #define DEBUG_PWM
-#define DEBUG_INPUT_DATA
-//#define DEBUG_HTTP_DATA
+// #define DEBUG_INPUT_DATA
+// #define DEBUG_HTTP_DATA
 // #define DEBUG_CAMERA
 // #define DEBUG_WIFI
 
@@ -29,6 +29,9 @@
 #ifdef CAMERA_ENABLED
 #define CAMERA_MODEL_AI_THINKER
 #endif // CAMERA_ENABLED
+
+#define SDA_PIN 15
+#define SCL_PIN 14
 
 
 #endif // SETUP_H_

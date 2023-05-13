@@ -93,23 +93,10 @@ static esp_err_t stream_handler(httpd_req_t *req)
         }
         else
         {
-            if (fb->format != PIXFORMAT_JPEG)
-            {
-                bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
-                esp_camera_fb_return(fb);
-                fb = NULL;
-                if (!jpeg_converted)
-                {
-                    log_e("JPEG compression failed");
-                    res = ESP_FAIL;
-                }
-            }
-            else
-            {
-                _jpg_buf_len = fb->len;
-                _jpg_buf = fb->buf;
-            }
+            _jpg_buf_len = fb->len;
+            _jpg_buf = fb->buf;
         }
+
         if (res == ESP_OK)
         {
             size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
@@ -162,6 +149,12 @@ void http_init()
     if (httpd_start(&hex_httpd, &config) == ESP_OK)
     {
         httpd_register_uri_handler(hex_httpd, &data_uri);
+    }
+
+    config.server_port += 1;
+    config.ctrl_port += 1;
+    if (httpd_start(&hex_httpd, &config) == ESP_OK)
+    {
         httpd_register_uri_handler(hex_httpd, &stream_uri);
     }
 }
