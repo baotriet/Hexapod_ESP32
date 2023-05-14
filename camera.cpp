@@ -96,7 +96,7 @@ void camera_init()
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
-    config.frame_size = FRAMESIZE_VGA;
+    config.frame_size = FRAMESIZE_CIF;
     config.pixel_format = PIXFORMAT_JPEG; // for streaming
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -110,13 +110,13 @@ void camera_init()
         if (psramFound())
         {
             config.jpeg_quality = 10;
-            config.fb_count = 1;
+            config.fb_count = 2;
             config.grab_mode = CAMERA_GRAB_LATEST;
         }
         else
         {
             // Limit the frame size when PSRAM is not available
-            config.frame_size = FRAMESIZE_CIF;
+            config.frame_size = FRAMESIZE_QVGA;
             config.fb_location = CAMERA_FB_IN_DRAM;
         }
     }
@@ -135,7 +135,9 @@ void camera_init()
     // drop down frame size for higher initial frame rate
     if (config.pixel_format == PIXFORMAT_JPEG)
     {
-        s->set_framesize(s, FRAMESIZE_QVGA);
+        s->set_vflip(s, 1);       // flip it back
+        s->set_contrast(s, 2);
+        s->set_saturation(s, -2); // lower the saturation
     }
     camera_doneInit = true;
 }
