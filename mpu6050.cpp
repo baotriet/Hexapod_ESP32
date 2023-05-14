@@ -24,7 +24,7 @@ float mpu6050_getAngle(char Axis) {
 }
 
 void mpu6050_init(bool isInit) {
-  Wire.begin(SDA,SCL);
+  Wire.begin(SDA_PIN,SCL_PIN);
 
   byte status = mpu.begin();
 #ifdef DEBUG_MPU

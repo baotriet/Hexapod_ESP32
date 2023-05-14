@@ -1412,12 +1412,12 @@ void setup()
   CheckAngles();
   ControlServo();
   delay(200);
-  pinMode(LED_GPIO_NUM, OUTPUT);
+  pinMode(LED_RED_GPIO, OUTPUT);
   for (int i = 5; i > 0; --i)
   {
-    digitalWrite(LED_GPIO_NUM, HIGH);  // turn the LED on (HIGH is the voltage level)
+    digitalWrite(LED_RED_GPIO, HIGH);  // turn the LED on (HIGH is the voltage level)
     delay(100);                      // wait for a second
-    digitalWrite(LED_GPIO_NUM, LOW); // turn the LED off by making the voltage LOW
+    digitalWrite(LED_RED_GPIO, LOW); // turn the LED off by making the voltage LOW
     delay(100);                      // wait for a second
   }
 }

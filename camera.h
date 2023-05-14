@@ -29,7 +29,8 @@
 #define PCLK_GPIO_NUM 22
 
 // 4 for flash led or 33 for normal led
-#define LED_GPIO_NUM 4
+#define LED_FLASH_GPIO 4
+#define LED_RED_GPIO 33
 
 #else
 #error "Camera model not selected"
