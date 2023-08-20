@@ -63,6 +63,13 @@ static esp_err_t data_handler(httpd_req_t *req)
 
     httpDataReady = true;
     httpd_resp_send(req, "Commands received", HTTPD_RESP_USE_STRLEN);
+    
+    sensor_t *s = esp_camera_sensor_get();
+
+    s->set_vflip(s, 1); // flip it back
+    // s->set_contrast(s, 2);
+    // s->set_saturation(s, -2); // lower the saturation
+
     return ESP_OK;
 }
 
@@ -125,6 +132,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
         {
             break;
         }
+        delay(100);
     }
     return res;
 }

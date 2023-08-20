@@ -1,4 +1,3 @@
-#include "camera.h"
 
 /*********
   Rui Santos
@@ -96,30 +95,32 @@ void camera_init()
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
-    config.frame_size = FRAMESIZE_CIF;
+    config.frame_size = FRAMESIZE_QQVGA;
     config.pixel_format = PIXFORMAT_JPEG; // for streaming
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = 12;
     config.fb_count = 1;
+    config.fb_location = CAMERA_FB_IN_DRAM;
+    
 
     // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
     //                      for larger pre-allocated frame buffer.
-    if (config.pixel_format == PIXFORMAT_JPEG)
-    {
-        if (psramFound())
-        {
-            config.jpeg_quality = 10;
-            config.fb_count = 2;
-            config.grab_mode = CAMERA_GRAB_LATEST;
-        }
-        else
-        {
-            // Limit the frame size when PSRAM is not available
-            config.frame_size = FRAMESIZE_QVGA;
-            config.fb_location = CAMERA_FB_IN_DRAM;
-        }
-    }
+    // if (config.pixel_format == PIXFORMAT_JPEG)
+    // {
+    //     if (psramFound())
+    //     {
+    //         config.jpeg_quality = 10;
+    //         config.fb_count = 1;
+    //         config.grab_mode = CAMERA_GRAB_LATEST;
+    //     }
+    //     else
+    //     {
+    //         // Limit the frame size when PSRAM is not available
+    //         config.frame_size = FRAMESIZE_HQVGA;
+    //         config.fb_location = CAMERA_FB_IN_DRAM;
+    //     }
+    // }
 
     // Camera init
     esp_err_t err = esp_camera_init(&config);
@@ -131,14 +132,14 @@ void camera_init()
         return;
     }
 
-    sensor_t *s = esp_camera_sensor_get();
-    // drop down frame size for higher initial frame rate
-    if (config.pixel_format == PIXFORMAT_JPEG)
-    {
-        s->set_vflip(s, 1);       // flip it back
-        s->set_contrast(s, 2);
-        s->set_saturation(s, -2); // lower the saturation
-    }
+    // sensor_t *s = esp_camera_sensor_get();
+    // // drop down frame size for higher initial frame rate
+    // if (config.pixel_format == PIXFORMAT_JPEG)
+    // {
+    //     s->set_vflip(s, 1);       // flip it back
+    //     // s->set_contrast(s, 2);
+    //     // s->set_saturation(s, -2); // lower the saturation
+    // }
     camera_doneInit = true;
 }
 
