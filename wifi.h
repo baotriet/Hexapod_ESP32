@@ -5,8 +5,8 @@
 #include "esp_http_server.h"
 #include "setup.h"
 
-#define WIFI_SSID "Zyxel_FAD7"
-#define WIFI_PSSW "C3pbwWhdfYrbC"
+#define WIFI_SSID "Stofa07897"
+#define WIFI_PSSW "gav47titte05"
 
 void wifi_init();
 

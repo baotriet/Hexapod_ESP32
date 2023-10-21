@@ -84,7 +84,7 @@
 #define CHexInitXZ 70
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))    // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866))  // sin(60) = .866
-#define CHexInitY 80                                     //Typical standing height (body above ground) in [mm]
+#define CHexInitY 60                                     //Typical standing height (body above ground) in [mm]
 
 #define cRRInitPosX CHexInitXZCos60  //Start positions of the Right Rear leg
 #define cRRInitPosY CHexInitY
@@ -112,7 +112,7 @@
 
 #define cXXCoxaLength 42  // This is for TH3-R legs
 #define cXXFemurLength 45
-#define cXXTibiaLength 80
+#define cXXTibiaLength 92
 
 #define cRRCoxaLength cXXCoxaLength  //Right Rear leg
 #define cRRFemurLength cXXFemurLength
@@ -245,10 +245,10 @@ enum {
 
 //                          RR RM RF LR LM LF
 // Left: Up   Down       Right: Up - Down +
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 150, -50, -100, 100, 100, 200 }; //reverse sign
+const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -100, 0, 100, 120, 200 }; //reverse left
 // Left: Up   Down       Right: Up - Down +
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 50, 100, 100, -50, 100, 150 }; //reverse sign
+const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 150, 120, 130, -30, 110, 130 }; //reverse sign
 // Left: Up   Down       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -100, 0, 0, -150, 100, 200 }; //reverse left
+const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 120, 230, 50, 0, 180, 230 }; //reverse sign
 
 #endif /* HEXCFG_H_ */

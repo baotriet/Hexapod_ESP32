@@ -95,7 +95,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
         fb = esp_camera_fb_get();
         if (!fb)
         {
-            Serial.println("Camera capture failed");
+            Serial.println(F("Camera capture failed"));
             res = ESP_FAIL;
         }
         else
