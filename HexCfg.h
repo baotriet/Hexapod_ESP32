@@ -81,10 +81,10 @@
 #define cLMCoxaAngle1 (0)     //Default Coxa setup angle, decimals = 1
 #define cLFCoxaAngle1 (600)   //Default Coxa setup angle, decimals = 1
 
-#define CHexInitXZ 70
+#define CHexInitXZ 65
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))    // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866))  // sin(60) = .866
-#define CHexInitY 60                                     //Typical standing height (body above ground) in [mm]
+#define CHexInitY 50                                     //Typical standing height (body above ground) in [mm]
 
 #define cRRInitPosX CHexInitXZCos60  //Start positions of the Right Rear leg
 #define cRRInitPosY CHexInitY
@@ -110,9 +110,9 @@
 #define cLFInitPosY CHexInitY
 #define cLFInitPosZ -CHexInitXZSin60
 
-#define cXXCoxaLength 42  // This is for TH3-R legs
-#define cXXFemurLength 45
-#define cXXTibiaLength 92
+#define cXXCoxaLength 28 
+#define cXXFemurLength 50
+#define cXXTibiaLength 80
 
 #define cRRCoxaLength cXXCoxaLength  //Right Rear leg
 #define cRRFemurLength cXXFemurLength
@@ -214,12 +214,12 @@
 
 // Lets try some multi leg positions depending on height settings.
 #if 1  // Start first without...
-#define CNT_HEX_INITS 2
-#define MAX_BODY_Y 100
+#define CNT_HEX_INITS 3
+#define MAX_BODY_Y 115
 
 #ifdef DEFINE_HEX_GLOBALS
-const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 50 };
-const byte g_abHexMaxBodyY[] PROGMEM = { 50, MAX_BODY_Y };
+const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 80, 65 };
+const byte g_abHexMaxBodyY[] PROGMEM = { CHexInitY, 70, MAX_BODY_Y };
 #else
 extern const byte g_abHexIntXZ[];
 extern const byte g_abHexMaxBodyY[];
@@ -245,10 +245,10 @@ enum {
 
 //                          RR RM RF LR LM LF
 // Left: Up   Down       Right: Up - Down +
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -100, 0, 100, 120, 200 }; //reverse left
+const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -100, 0, -100, -100, 0 }; //reverse left
 // Left: Up   Down       Right: Up - Down +
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 150, 120, 130, -30, 110, 130 }; //reverse sign
-// Left: Up   Down       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 120, 230, 50, 0, 180, 230 }; //reverse sign
+const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 0, 0, 100, 0, 0, 0 }; //reverse right
+// Left: Up +  Down -       Right: Up + Down -
+const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 0, 0, 200, 70, -40, 100 }; //reverse left
 
 #endif /* HEXCFG_H_ */

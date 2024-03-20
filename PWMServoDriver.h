@@ -5,7 +5,7 @@
  *      Author: baotriet
  */
 
-#ifndef PWMSERVODRIVER_H_   /* Include guard */
+#ifndef PWMSERVODRIVER_H_ /* Include guard */
 #define PWMSERVODRIVER_H_
 
 #include <Adafruit_PWMServoDriver.h>
@@ -17,4 +17,4 @@ void PMWServoDriver_init();
 void PMWServoDriver_set(uint16_t addr, byte channel, int mapAngle);
 void PMWServoDriver_goSleep();
 
-#endif // PWMSERVODRIVER_H_
+#endif  // PWMSERVODRIVER_H_

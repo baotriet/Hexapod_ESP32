@@ -23,6 +23,8 @@ float mpu6050_getAngle(char Axis) {
   return getAngle;
 }
 
+
+
 void mpu6050_init(bool isInit) {
   Wire.begin(SDA_PIN,SCL_PIN);
 

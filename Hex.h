@@ -189,6 +189,7 @@ byte CycleTime;
 struct RobotStatus
 {
   byte bHexON;
+  bool bHexInit;
   // Body position
   long BodyPosX; // Global Input for the position of the body
   long BodyPosY; // Global Input for the position of the body
@@ -209,6 +210,11 @@ struct RobotStatus
   long TravelLengthZ;   // Current Travel length Z (front - back)
   long TravelRotationY; // Current Travel Rotation Y
 
+  long TipSensorTravelLengthX; // Saved Travel length X
+  long TipSensorTravelLengthZ; // Saved Travel length Y
+  bool bTipSensorSavedTravel;   // flat to indicate that travels are saved
+  bool bFeetOnTheGround;
+
   // Single Leg Control
   byte SelectedLeg;
   long SLLegX;
@@ -222,6 +228,7 @@ struct RobotStatus
   // Balance
   bool bBalanceMode;
   bool bBodyBalanceMode;
+  bool bSenseGround;
 
   // Camera
   bool bCameraStart;
@@ -737,10 +744,12 @@ void BodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
   short CPR_Z; // Total Z distance between the center of the body and the feet
   short CPR_Y; // Total Y distance between the center of the body and the feet
   double bodyBalance[3] = {0};
+  double tempBodyBalance[3];
+  pid_update(tempBodyBalance, 3);
 #ifdef MPU_ENABLED
   if (Hex.bBodyBalanceMode)
   {
-    pid_update(bodyBalance, 3);
+    *bodyBalance = *tempBodyBalance;
   }
 #endif // MPU_ENABLED
 
@@ -884,28 +893,30 @@ void Initialize()
   Hex.TravelRotationY = 0;
 
   Hex.GaitType = 1;
-  Hex.bBalanceMode = 0;
-  Hex.bBodyBalanceMode = 0;
-  Hex.bCameraStart = 0;
+  Hex.bBalanceMode = false;
+  Hex.bBodyBalanceMode = false;
+  Hex.bSenseGround = false;
+  Hex.bCameraStart = false;
   Hex.LegLiftHeight = 50;
   Hex.ForceGaitStepCnt = 0; // added to try to adjust starting positions depending on height...
   Hex.GaitStep = 1;
   GaitSelect();
 
   // Input controller initialization
-  //    Hex.bAdjustLegPositions = 0;
+  //    Hex.bAdjustLegPositions = false;
   Hex.OperationMode = MODE_WALK;
   Hex.GripPosition = 800;
-  Hex.bDblTravel = 0;
-  Hex.bDoubleHeight = 0;
+  Hex.bDblTravel = false;
+  Hex.bDoubleHeight = false;
 
   Hex.SpeedControl = 50;
-
+  Hex.bFeetOnTheGround = false;
   g_BodyYOffset = 0;
   g_BodyYShift = 0;
   ServoMoveTime = 100;
   dataReady = 0;
-  Hex.bHexON = 0;
+  Hex.bHexON = false;
+  Hex.bHexInit = false;
 }
 
 //--------------------------------------------------------------------
@@ -1000,31 +1011,31 @@ void ControlServo()
     case 0: // RR
       StepControlServo(R_DRIVER, 6, 0, CoxaAngle[LegNr]);
       StepControlServo(R_DRIVER, 7, 1, -FemurAngle[LegNr]);
-      StepControlServo(R_DRIVER, 8, 2, -TibiaAngle[LegNr]);
+      StepControlServo(R_DRIVER, 8, 2, TibiaAngle[LegNr]);
       break;
     case 1: // RM
       StepControlServo(R_DRIVER, 3, 3, CoxaAngle[LegNr]);
       StepControlServo(R_DRIVER, 4, 4, -FemurAngle[LegNr]);
-      StepControlServo(R_DRIVER, 5, 5, -TibiaAngle[LegNr]);
+      StepControlServo(R_DRIVER, 5, 5, TibiaAngle[LegNr]);
       break;
     case 2: // RF
       StepControlServo(R_DRIVER, 2, 6, CoxaAngle[LegNr]);
       StepControlServo(R_DRIVER, 1, 7, -FemurAngle[LegNr]);
-      StepControlServo(R_DRIVER, 0, 8, -TibiaAngle[LegNr]);
+      StepControlServo(R_DRIVER, 0, 8, TibiaAngle[LegNr]);
       break;
     case 3: // LR
-      StepControlServo(L_DRIVER, 0, 9, -CoxaAngle[LegNr]);
-      StepControlServo(L_DRIVER, 1, 10, -FemurAngle[LegNr]);
+      StepControlServo(L_DRIVER, 0, 9,  -CoxaAngle[LegNr]);
+      StepControlServo(L_DRIVER, 1, 10, FemurAngle[LegNr]);
       StepControlServo(L_DRIVER, 2, 11, -TibiaAngle[LegNr]);
       break;
     case 4: // LM
       StepControlServo(L_DRIVER, 3, 12, -CoxaAngle[LegNr]);
-      StepControlServo(L_DRIVER, 4, 13, -FemurAngle[LegNr]);
+      StepControlServo(L_DRIVER, 4, 13, FemurAngle[LegNr]);
       StepControlServo(L_DRIVER, 5, 14, -TibiaAngle[LegNr]);
       break;
     case 5: // LF
       StepControlServo(L_DRIVER, 8, 15, -CoxaAngle[LegNr]);
-      StepControlServo(L_DRIVER, 7, 16, -FemurAngle[LegNr]);
+      StepControlServo(L_DRIVER, 7, 16, FemurAngle[LegNr]);
       StepControlServo(L_DRIVER, 6, 17, -TibiaAngle[LegNr]);
       break;
     default:
@@ -1116,7 +1127,7 @@ void HexOFF(void)
   //  g_BodyYOffset = 0;
   //  g_BodyYShift = 0;
   //  Hex.SelectedLeg = 255;
-  //  Hex.bHexON = 0;
+  //  Hex.bHexON = false;
   //  AdjustLegPositionsToBodyHeight();  // Put main workings into main program file
   //  Initialize();
   //  delay(10);
@@ -1128,7 +1139,7 @@ void HexOFF(void)
 void CommandInput()
 {
   uint16_t checksum;
-  Hex.bAdjustLegPositions = 0;
+  Hex.bAdjustLegPositions = false;
   short dwButton;
   static byte nMode = 0;
   static byte cError = 0;
@@ -1140,7 +1151,7 @@ void CommandInput()
   if (reData[0] == checksum)
   {
     cError = 0;
-    dwButton = (reData[1] << 8) | reData[2];
+    dwButton = (reData[2] << 8) | reData[1];
     byte lx = (byte)reData[3];
     byte ly = (byte)reData[4];
     byte rx = (byte)reData[5];
@@ -1163,8 +1174,8 @@ void CommandInput()
       }
       else
       {
-        Hex.bHexON = 1;
-        Hex.bAdjustLegPositions = 1;
+        Hex.bHexON = true;
+        Hex.bAdjustLegPositions = true;
       }
     }
     if (Hex.bHexON)
@@ -1199,7 +1210,28 @@ void CommandInput()
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_BALANCE_TOGGLE))
-        Hex.bBalanceMode = !Hex.bBalanceMode;
+      {
+        if (!Hex.bBalanceMode && !Hex.bSenseGround)
+        {
+          Hex.bBalanceMode = true;
+        }
+        else
+        {
+          Hex.bBalanceMode = false;
+        }
+      }
+
+      if (BUTTON_PRESSED(dwButton, INPUT_TIP_SENSOR))
+      {
+        if (!Hex.bBalanceMode && !Hex.bSenseGround)
+        {
+          Hex.bSenseGround = true;
+        }
+        else
+        {
+          Hex.bSenseGround = false;
+        }
+      }
 
       if (BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE))
       {
@@ -1207,7 +1239,7 @@ void CommandInput()
           g_BodyYOffset = 0;
         else
           g_BodyYOffset = 40;
-        Hex.bAdjustLegPositions = 1;
+        Hex.bAdjustLegPositions = true;
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_BODY_UP))
@@ -1215,7 +1247,7 @@ void CommandInput()
         g_BodyYOffset += 10;
         if (g_BodyYOffset > MAX_BODY_Y)
           g_BodyYOffset = MAX_BODY_Y;
-        Hex.bAdjustLegPositions = 1;
+        Hex.bAdjustLegPositions = true;
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_BODY_DOWN) && g_BodyYOffset)
@@ -1225,7 +1257,7 @@ void CommandInput()
         {
           g_BodyYOffset = 0;
         }
-        Hex.bAdjustLegPositions = 1;
+        Hex.bAdjustLegPositions = true;
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_SPEED_UP))
@@ -1267,11 +1299,12 @@ void CommandInput()
       if (BUTTON_PRESSED(dwButton, INPUT_CAMERA_TOGGLE))
       {
         Hex.bCameraStart = !Hex.bCameraStart;
-        if(Hex.bCameraStart && camera_isInitDone())
+        if (Hex.bCameraStart && camera_isInitDone())
         {
           // camera_start();
         }
-        else{
+        else
+        {
           // camera_stop();
         }
       }
@@ -1311,6 +1344,17 @@ void CommandInput()
         {
           Hex.TravelLengthX = Hex.TravelLengthX / 2;
           Hex.TravelLengthZ = Hex.TravelLengthZ / 2;
+        }
+
+        Hex.TipSensorTravelLengthX = Hex.TravelLengthX;
+        Hex.TipSensorTravelLengthZ = Hex.TravelLengthZ;
+        Hex.bTipSensorSavedTravel = true;
+
+        if(Hex.bSenseGround && Hex.bTipSensorSavedTravel)
+        {
+          Hex.TravelLengthX = Hex.TipSensorTravelLengthX;
+          Hex.TravelLengthZ = Hex.TipSensorTravelLengthZ;
+          Hex.bTipSensorSavedTravel = false;
         }
 
         Hex.TravelRotationY = -(rx - 128) / 4; // Right Stick Left/Right
@@ -1400,10 +1444,6 @@ void setup()
   http_init();
   delay(10);
 #endif HTTP_ENABLED
-#ifdef MPU_ENABLED
-  pid_init();
-  delay(10);
-#endif // MPU_ENABLED
 #ifdef CAMERA_ENABLED
   camera_init();
   delay(10);
@@ -1412,13 +1452,18 @@ void setup()
   CheckAngles();
   ControlServo();
   delay(200);
+// after motor init to calibrate the sensor
+#ifdef MPU_ENABLED
+  pid_init();
+  delay(10);
+#endif // MPU_ENABLED
   pinMode(LED_RED_GPIO, OUTPUT);
   for (int i = 5; i > 0; --i)
   {
-    digitalWrite(LED_RED_GPIO, HIGH);  // turn the LED on (HIGH is the voltage level)
-    delay(100);                      // wait for a second
-    digitalWrite(LED_RED_GPIO, LOW); // turn the LED off by making the voltage LOW
-    delay(100);                      // wait for a second
+    digitalWrite(LED_RED_GPIO, HIGH); // turn the LED on (HIGH is the voltage level)
+    delay(100);                       // wait for a second
+    digitalWrite(LED_RED_GPIO, LOW);  // turn the LED off by making the voltage LOW
+    delay(100);                       // wait for a second
   }
 }
 
@@ -1523,7 +1568,9 @@ void loop()
   CheckAngles();
 
 #ifndef DEBUG_ON
-  if (Hex.bHexON)
+  if (Hex.bHexON 
+  // || !Hex.bHexInit
+  )
 #else
   if (1)
 #endif // DEBUG_ON
@@ -1539,7 +1586,7 @@ void loop()
     }
     else
     { // Movement speed excl. Walking
-      ServoMoveTime = 100 + Hex.SpeedControl;
+      ServoMoveTime = 50 + Hex.SpeedControl;
     }
 
     ControlServo();
@@ -1556,7 +1603,8 @@ void loop()
         break;
       }
     }
-
+    Hex.bFeetOnTheGround = true;
+    // This code below is used to reduce the speed of hexapod, it will be fast without these lines below 
     if (bExtraCycle > 0)
     {
       bExtraCycle--;
@@ -1571,6 +1619,7 @@ void loop()
       } while (millis() < lTimeWaitEnd);
     }
   }
-
+  // run 1 time to setup the robot
+  Hex.bHexInit = true;
   PrevServoMoveTime = ServoMoveTime;
 }

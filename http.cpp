@@ -66,7 +66,7 @@ static esp_err_t data_handler(httpd_req_t *req)
     
     sensor_t *s = esp_camera_sensor_get();
 
-    s->set_vflip(s, 1); // flip it back
+    // s->set_vflip(s, 1); // flip it back
     // s->set_contrast(s, 2);
     // s->set_saturation(s, -2); // lower the saturation
 
