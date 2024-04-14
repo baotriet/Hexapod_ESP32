@@ -1404,10 +1404,6 @@ void setup()
   pid_init();
   delay(10);
 #endif // MPU_ENABLED
-#ifdef CAMERA_ENABLED
-  camera_init();
-  delay(10);
-#endif // CAMERA_ENABLED
   Initialize();
   CheckAngles();
   ControlServo();

@@ -36,7 +36,7 @@
 #error "Camera model not selected"
 #endif
 
-void camera_init();
 bool camera_isInitDone();
+esp_err_t camera_stream_handler(httpd_req_t *req);
 
 #endif // CAMERA_H_
