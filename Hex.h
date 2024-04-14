@@ -1444,10 +1444,10 @@ void setup()
   http_init();
   delay(10);
 #endif HTTP_ENABLED
-#ifdef CAMERA_ENABLED
-  camera_init();
+#ifdef MPU_ENABLED
+  pid_init();
   delay(10);
-#endif // CAMERA_ENABLED
+#endif // MPU_ENABLED
   Initialize();
   CheckAngles();
   ControlServo();
