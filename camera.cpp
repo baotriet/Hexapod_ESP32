@@ -135,7 +135,7 @@ static esp_err_t camera_init() {
   sensor_t *s = esp_camera_sensor_get();
   // drop down frame size for higher initial frame rate
   if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_vflip(s, 1);  // flip it back
+    // s->set_vflip(s, 1);  // flip it back
                          // s->set_contrast(s, 2);
                          // s->set_saturation(s, -2); // lower the saturation
   }
