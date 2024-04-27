@@ -164,8 +164,8 @@
 #define COXA_MaxANG 800
 #define FEMUR_MinANG -800
 #define FEMUR_MaxANG 800
-#define TIBIA_MinANG -800
-#define TIBIA_MaxANG 800
+#define TIBIA_MinANG -600
+#define TIBIA_MaxANG 600
 //--------------------------------------------------------------------
 //[MIN/MAX ANGLES]
 #define cRRCoxaMin1 COXA_MinANG  //Mechanical limits of the Right Rear Leg, decimals = 1
@@ -245,10 +245,10 @@ enum {
 
 //                          RR RM RF LR LM LF
 // Left: Up   Down       Right: Up - Down +
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -100, 0, -100, -100, 0 }; //reverse left
+const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -40, 130, -100, -100, 0 }; //reverse left
 // Left: Up   Down       Right: Up - Down +
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 0, 0, 100, 0, 0, 0 }; //reverse right
+const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -50, 0, 200, 0, 100, 0 }; //reverse right
 // Left: Up +  Down -       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 0, 0, 200, 70, -40, 100 }; //reverse left
+const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -160, 60, 0, 10, -100, 40 }; //reverse left
 
 #endif /* HEXCFG_H_ */
