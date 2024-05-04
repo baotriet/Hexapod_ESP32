@@ -8,6 +8,8 @@
 #ifndef HEXCFG_H_
 #define HEXCFG_H_
 
+#include "setup.h"
+
 #define LED_RED GPIO_PIN_1
 #define LED_GREEN GPIO_PIN_2
 #define LED_BLUE GPIO_PIN_3
@@ -61,6 +63,10 @@
 #define LR 3
 #define LM 4
 #define LF 5
+
+#define COXA 0
+#define FERMUR 1
+#define TIBIA 2
 
 #define NUMBER_OF_LEGS 6
 #define STRING_INPUT_SIZE 50
@@ -244,11 +250,11 @@ enum {
 
 
 //                          RR RM RF LR LM LF
-// Left: Up   Down       Right: Up - Down +
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -40, 130, -100, -100, 0 }; //reverse left
-// Left: Up   Down       Right: Up - Down +
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -50, 0, 200, 0, 100, 0 }; //reverse right
-// Left: Up +  Down -       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -160, 60, 0, 10, -100, 40 }; //reverse left
+// Left: CW +   CCW -        Right: CW + CCW -
+const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -40, 130, -100, -100, 0 }; //choose angle then reverse left
+// Left: Up -  Down +      Right: Up + Down -
+const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -50, 20, 200, 0, 0, 0 }; //choose angle then reverse right
+// Left: Up -  Down +       Right: Up + Down -
+const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -160, 60, 0, 10, -100, 40 }; //choose angle then reverse left
 
 #endif /* HEXCFG_H_ */

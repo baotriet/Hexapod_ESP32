@@ -3,7 +3,6 @@
 
 #include "stdbool.h"
 #include "setup.h"
-#include "BluetoothSerial.h"
 
 void bluetooth_init(bool needConnect);
 bool bluetooth_prepareData(byte *inputData);

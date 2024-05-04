@@ -1,4 +1,7 @@
+#include <MPU6050_light.h>
+#include "Wire.h"
 #include "mpu6050.h"
+#include "setup.h"
 
 MPU6050 mpu(Wire);
 

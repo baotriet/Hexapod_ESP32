@@ -8,8 +8,6 @@
 #define MPU6050_H_
 
 #include "stdbool.h"
-#include <MPU6050_light.h>
-#include "Wire.h"
 #include "setup.h"
 
 void mpu6050_init(bool isInit);

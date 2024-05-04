@@ -1,4 +1,6 @@
+#include "BluetoothSerial.h"
 #include "bluetooth.h"
+#include "setup.h"
 
 #define HEXPORT_RX 2
 #define HEXPORT_TX 3

@@ -1,13 +1,8 @@
 #ifndef CAMERA_H_ /* Include guard */
 #define CAMERA_H_
 
-#include "esp_http_server.h"
-#include "esp_camera.h"
-#include "esp_timer.h"
-#include "img_converters.h"
-#include "fb_gfx.h"
-#include <WiFi.h>
 #include "setup.h"
+#include "esp_http_server.h"
 
 #if defined(CAMERA_MODEL_AI_THINKER)
 #define PWDN_GPIO_NUM 32

@@ -1,4 +1,8 @@
+#include <PubSubClient.h>
+#include <WiFi.h>
+#include "esp_http_server.h"
 #include "mqtt.h"
+#include "setup.h"
 
 #define MQTT_PORT 1883
 #define MQTT_USER "hexMQTT"

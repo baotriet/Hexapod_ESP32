@@ -16,6 +16,11 @@
 *********/
 #include "camera.h"
 #include "setup.h"
+#include "esp_camera.h"
+#include "esp_timer.h"
+#include "img_converters.h"
+#include "fb_gfx.h"
+#include <WiFi.h>
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 
@@ -151,7 +156,7 @@ esp_err_t camera_stream_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
   size_t _jpg_buf_len = 0;
-  uint8_t *_jpg_buf = NULL;
+  byte *_jpg_buf = NULL;
   char *part_buf[128];
 
   if (camera_doneInit == false) {

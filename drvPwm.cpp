@@ -1,21 +1,24 @@
-#include "PWMServoDriver.h"
+#include "drvPwm.h"
+#include <Adafruit_PWMServoDriver.h>
+#include <Wire.h>
+#include "HexCfg.h"
 
 Adafruit_PWMServoDriver pwmRight = Adafruit_PWMServoDriver(R_DRIVER);
 Adafruit_PWMServoDriver pwmLeft = Adafruit_PWMServoDriver(L_DRIVER);
 
-void PMWServoDriver_goSleep() {
+void drvPwm_goSleep() {
   pwmRight.sleep();
   pwmLeft.sleep();
 }
 
-void PMWServoDriver_set(uint16_t addr, byte channel, int mapAngle) {
+void drvPwm_set(uint16_t addr, byte channel, int pwmPulse) {
   if (R_DRIVER == addr)
-    pwmRight.setPWM(channel, 0, mapAngle);
+    pwmRight.setPWM(channel, 0, pwmPulse);
   else if (L_DRIVER == addr)
-    pwmLeft.setPWM(channel, 0, mapAngle);
+    pwmLeft.setPWM(channel, 0, pwmPulse);
 }
 
-void PMWServoDriver_init() {
+void drvPwm_init() {
 #ifdef DEBUG_PWM
   Serial.println(F("16 test"));
 #endif  // DEBUG_PWM
@@ -27,8 +30,4 @@ void PMWServoDriver_init() {
   pwmLeft.setOscillatorFrequency(16000000);
   pwmRight.setPWMFreq(PWM_FREQ);  // Analog servos run at ~50 Hz updates
   pwmLeft.setPWMFreq(PWM_FREQ);   // Analog servos run at ~50 Hz updates
-  //#ifdef DEBUG
-  //pwmRight.sleep();
-  //pwmLeft.sleep();
-  //#endif
 }

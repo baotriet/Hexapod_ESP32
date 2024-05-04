@@ -1,4 +1,9 @@
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include "esp_http_server.h"
+#include "camera.h"
 #include "http.h"
+#include "setup.h"
 
 StaticJsonDocument<512> doc;
 
