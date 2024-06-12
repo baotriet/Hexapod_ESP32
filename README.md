@@ -1,1 +1,1 @@
-# Hexapod_1.0_Nano
+# Hexapod_ESP32
