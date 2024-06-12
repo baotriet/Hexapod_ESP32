@@ -1,6 +1,5 @@
-#include "wifi.h"
 #include <WiFi.h>
-#include "esp_http_server.h"
+#include "myWifi.h"
 #include "setup.h"
 
 IPAddress local_IP(192, 168, 87, 200);

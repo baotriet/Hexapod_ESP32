@@ -6,12 +6,13 @@
 #define NUM_OF_SERVO 18
 
 static byte servoCh[NUM_OF_LEG][NUM_SERVOS_PER_LEG] = {
+  // c  f  t
     {6, 7, 8}, // RR
     {3, 4, 5}, // RM
-    {2, 1, 0}, // RF
+    {0, 1, 2}, // RF
     {0, 1, 2}, // LR
     {3, 4, 5}, // LM
-    {8, 7, 6}  // LF
+    {6, 7, 8}  // LF
 };
 
 void

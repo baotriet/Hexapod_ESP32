@@ -6,4 +6,4 @@
 
 void wifi_init();
 
-#endif WIFI_H_
+#endif //WIFI_H_

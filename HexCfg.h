@@ -241,20 +241,12 @@ enum {
   MODE_SINGLE_LEG
 };
 
-// int offsetAngle[18] = {-50, -50, -100,
-//                        -50, -100, 0,
-//                        100, -100, 0,
-//                        -100, 50, 150,
-//                        -100, -100, -100,
-//                        -200, -150, -200};
-
-
 //                          RR RM RF LR LM LF
 // Left: CW +   CCW -        Right: CW + CCW -
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { 100, -40, 130, -100, -100, 0 }; //choose angle then reverse left
+const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 // Left: Up -  Down +      Right: Up + Down -
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -50, 20, 200, 0, 0, 0 }; //choose angle then reverse right
-// Left: Up -  Down +       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = { -160, 60, 0, 10, -100, 40 }; //choose angle then reverse left
+const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
+// Left: Up +  Down -       Right: Up + Down -
+const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
 
 #endif /* HEXCFG_H_ */

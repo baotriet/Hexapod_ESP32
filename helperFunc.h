@@ -39,11 +39,23 @@ long *helperFunc_getATan2(short AtanX, short AtanY);
 /**
  * @brief helperFunc_smoothControl (From Zenta) -  This function makes the body rotation and translation much smoother
  *
- * @param CtrlMoveInp
- * @param CtrlMoveOut
- * @param CtrlDivider
+ * @param currentVal    current value
+ * @param targetVal     target value
+ * @param baseDiv       divider to smooth the value
+ * @param threshold     minimum gap between currentVal and targetVal
  * @return short
  */
-short helperFunc_smoothControl(short CtrlMoveInp, short CtrlMoveOut, byte CtrlDivider);
+short helperFunc_smoothControl(short currentVal, short targetVal, byte baseDiv, byte threshold);
+
+/**
+ * @brief Reverse command direction from 2 joysticks left and right
+ * 
+ * @param lx    left x command
+ * @param ly    left y command
+ * @param rx    right x command
+ * @param ry    right y command
+ */
+void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry);
+
 
 #endif /* HELPER_FUNC_H_ */

@@ -159,12 +159,36 @@ long *helperFunc_getATan2(short AtanX, short AtanY)
     return atan4;
 }
 
-short helperFunc_smoothControl(short CtrlMoveInp, short CtrlMoveOut, byte CtrlDivider)
+short helperFunc_smoothControl(short currentVal, short targetVal, byte baseDiv, byte threshold)
 {
-    if (CtrlMoveOut < (CtrlMoveInp - 4))
-        return CtrlMoveOut + abs((CtrlMoveOut - CtrlMoveInp) / CtrlDivider);
-    else if (CtrlMoveOut > (CtrlMoveInp + 4))
-        return CtrlMoveOut - abs((CtrlMoveOut - CtrlMoveInp) / CtrlDivider);
+    short difference = targetVal - currentVal;
+    byte div;
 
-    return CtrlMoveInp;
+    if (abs(difference) > threshold)
+    {
+        // Dynamic divisor calculation for smoother transition
+        // Larger difference results in a smaller divisor (larger step)
+        // Smaller difference results in a larger divisor (smaller step)
+        div = baseDiv + abs(difference) / 10; // Adjust the divisor formula as needed
+
+        if (currentVal < targetVal)
+        {
+            return currentVal + abs(difference) / div;
+        }
+        else if (currentVal > targetVal)
+        {
+            return currentVal - abs(difference) / div;
+        }
+    }
+
+    return targetVal;
+}
+
+
+void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry)
+{
+  *lx = *lx;
+  *ly = 255 - *ly;
+  *rx = 255 - *rx;
+  *ry = 255 - *ry;
 }
