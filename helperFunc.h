@@ -37,15 +37,33 @@ unsigned long helperFunc_isqrt32(unsigned long n);
 long *helperFunc_getATan2(short AtanX, short AtanY);
 
 /**
- * @brief helperFunc_smoothControl (From Zenta) -  This function makes the body rotation and translation much smoother
+ * @brief helperFunc_smoothBasedVal (From Zenta) -  This function makes the body rotation and translation much smoother
  *
  * @param currentVal    current value
  * @param targetVal     target value
  * @param baseDiv       divider to smooth the value
  * @param threshold     minimum gap between currentVal and targetVal
- * @return short
+ * @return updated value
  */
-short helperFunc_smoothControl(short currentVal, short targetVal, byte baseDiv, byte threshold);
+short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv, byte threshold);
+
+/**
+ * @brief This function adjusts the value based on the time
+ * 
+ * @param currentVal    current value
+ * @param targetVal     target value
+ * @param threshold     mininum gap between current and target value
+ * @return updated value
+ */
+short helperFunc_smoothBasedTime(short currentVal, short targetVal, byte threshold);
+
+/**
+ * @brief Get time information for smooth funtion based on time
+ * 
+ * @param interval      run time interval
+ * @param elapsedTime   elapsed time
+ */
+void helperFunc_getTimeInfo(unsigned long interval, unsigned long elapsedTime);
 
 /**
  * @brief Reverse command direction from 2 joysticks left and right

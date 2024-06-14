@@ -34,12 +34,18 @@ void footSensor_clrFlag(void);
  * @return true 
  * @return false 
  */
-bool footSensor_checkAllSensor(void);
+bool footSensor_groundAll(void);
 
 /**
  * @brief get the current working leg number
  * 
  */
 void footSensor_getWorkingSensor(byte legNr);
+
+/**
+ * @brief check if foot sensor is activated, then stop the corresponding leg
+ * 
+ */
+void footSensor_checkWithStop();
 
 #endif // FOOTSENSOR_H_

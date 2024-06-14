@@ -68,8 +68,12 @@
 #define FERMUR 1
 #define TIBIA 2
 
-#define NUMBER_OF_LEGS 6
 #define STRING_INPUT_SIZE 50
+
+#define NUM_OF_LEGS 6
+#define NUM_SERVOS_PER_LEG 3
+#define NUM_OF_SERVO 18
+#define NUM_SERVOS_PER_PCA 9
 
 #ifndef DEFAULT_GAIT_SPEED
 #define DEFAULT_GAIT_SPEED 60
@@ -243,10 +247,10 @@ enum {
 
 //                          RR RM RF LR LM LF
 // Left: CW +   CCW -        Right: CW + CCW -
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
+const word CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 // Left: Up -  Down +      Right: Up + Down -
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
+const word FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
 // Left: Up +  Down -       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
+const word TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
 
 #endif /* HEXCFG_H_ */

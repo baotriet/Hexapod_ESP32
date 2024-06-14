@@ -36,5 +36,4 @@
 #define SDA_PIN 15
 #define SCL_PIN 14
 
-
 #endif // SETUP_H_

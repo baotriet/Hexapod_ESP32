@@ -12,4 +12,19 @@
  */
 void servo_setAngle(byte legNr, byte joint, int ServoAngle);
 
+/**
+ * @brief stop servo by sending zero pulse
+ * 
+ * @param legNr     Order number of a leg
+ * @param joint     type of joint
+ */
+void servo_stop(byte legNr, byte joint);
+
+/**
+ * @brief stop the selected leg
+ * 
+ * @param legNr     Order number of a leg
+ */
+void servo_stopLeg(byte legNr);
+
 #endif // SERVO_H
