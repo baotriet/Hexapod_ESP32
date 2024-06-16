@@ -196,7 +196,7 @@ short helperFunc_smoothBasedTime(short currentVal, short targetVal, byte thresho
 {
     short difference = targetVal - currentVal;
 
-    if (abs(difference) > threshold)
+    if (abs(difference) > threshold && smoothInterval != 0)
     {
         // Dynamic divisor calculation for smoother transition
         float timeFraction = smoothElapseTime/smoothInterval; 

@@ -1392,13 +1392,22 @@ bool getCmd(byte *cmd)
   bool ret = false;
 #ifdef BLUETOOTH_ENABLED
   ret = bluetooth_prepareData(cmd);
-#elif defined(MQTT_ENABLE)
+#elif defined(MQTT_ENABLED)
   mqtt_update();
   ret = mqtt_dataReady();
-  cmd = mqtt_inputData();
+  if(ret)
+  {
+    byte *mqttData = mqtt_inputData();
+    memcpy(cmd, mqttData, 7 * sizeof(byte));
+  }
+  
 #elif defined(HTTP_ENABLED)
   ret = http_dataReady();
-  cmd = http_inputData();
+  if(ret)
+  {
+    byte *httpData = http_inputData();
+    memcpy(cmd, httpData, 7 * sizeof(byte));
+  }
 #else
   ret = false;
   cmd = NULL;
@@ -1487,37 +1496,12 @@ void setup()
  */
 void loop()
 {
-  byte *commandData;
-  static bool cmdDataReady;
+  byte commandData[7];
+  bool cmdDataReady = getCmd(commandData);
   // Start time
 
   uint32_t lTimeWaitEnd;
   lTimerStart = millis();
-
-#ifdef BLUETOOTH_ENABLED
-  cmdDataReady = bluetooth_prepareData(commandData);
-#elif defined(MQTT_ENABLE)
-  mqtt_update();
-  cmdDataReady = mqtt_dataReady();
-  commandData = mqtt_inputData();
-#elif defined(HTTP_ENABLED)
-  cmdDataReady = http_dataReady();
-  commandData = http_inputData();
-#else
-  cmdDataReady = false;
-  commandData = NULL;
-#endif
-
-#ifdef DEBUG_INPUT_DATA
-  Serial.println(cmdDataReady);
-  Serial.print(F("inputData: "));
-  for (byte i = 0; i < 7; i++)
-  {
-    Serial.print(commandData[i]);
-    Serial.print(F(" "));
-  }
-  Serial.println();
-#endif // DEBUG_INPUT_DATA
 
 #ifdef FOOT_SENSOR_ENABLED
   if (footSensorTimeOut && savedCommandData != NULL)
