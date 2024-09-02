@@ -80,6 +80,11 @@
 #define DEFAULT_SLOW_GAIT 70
 #endif
 
+#define SERVO_ANGLE_6V 60
+#define SERVO_TIME_6V 0.08
+#define SERVO_ANGLE_PER_SECOND  SERVO_ANGLE_6V/SERVO_TIME_6V
+#define SERVO_ANGLE_PER_MILISEC 1000/SERVO_ANGLE_PER_SECOND
+
 #define SmDiv 5     // 3 to 5
 #define cGPlimit 2  // GP=GaitPos testing different limits
 //--------------------------------------------------------------------
@@ -247,10 +252,10 @@ enum {
 
 //                          RR RM RF LR LM LF
 // Left: CW +   CCW -        Right: CW + CCW -
-const word CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
+const int CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 // Left: Up -  Down +      Right: Up + Down -
-const word FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
+const int FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
 // Left: Up +  Down -       Right: Up + Down -
-const word TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
+const int TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
 
 #endif /* HEXCFG_H_ */

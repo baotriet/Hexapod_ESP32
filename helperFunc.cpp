@@ -42,8 +42,9 @@ static const word GetSin[] PROGMEM = {
     9762, 9781, 9799, 9816, 9832, 9848, 9862, 9876, 9890, 9902, 9914, 9925, 9935, 9945, 9953, 9961, 9969,
     9975, 9981, 9986, 9990, 9993, 9996, 9998, 9999, 10000}; //
 
-static unsigned long smoothInterval;
-static unsigned long smoothElapseTime;
+static uint32_t smoothInterval;
+static uint32_t smoothElapseTime;
+static byte smoothTimeStep;
 
 short *helperFunc_getSinCos(short AngleDeg1)
 {
@@ -171,7 +172,7 @@ short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv,
         // Dynamic divisor calculation for smoother transition
         // Larger difference results in a smaller divisor (larger step)
         // Smaller difference results in a larger divisor (smaller step)
-        byte div = baseDiv + abs(difference) / 10; // Adjust the divisor formula as needed
+        byte div = baseDiv + abs(difference)/10; // Adjust the divisor formula as needed
 
         if (currentVal < targetVal)
         {
@@ -185,41 +186,6 @@ short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv,
 
     return targetVal;
 }
-
-void helperFunc_getTimeInfo(unsigned long interval, unsigned long elapsedTime)
-{
-    smoothInterval = interval;
-    smoothElapseTime = elapsedTime;
-}
-
-short helperFunc_smoothBasedTime(short currentVal, short targetVal, byte threshold)
-{
-    short difference = targetVal - currentVal;
-
-    if (abs(difference) > threshold && smoothInterval != 0)
-    {
-        // Dynamic divisor calculation for smoother transition
-        float timeFraction = smoothElapseTime/smoothInterval; 
-        if(timeFraction > 1.0) timeFraction = 1.0;
-        if(timeFraction < 0.0) timeFraction = 0.0;
-
-        // Calculate the step size based on the speed and interval
-        byte step = difference * timeFraction;
-
-        if (currentVal < targetVal)
-        {
-            return currentVal + step;
-        }
-        else if (currentVal > targetVal)
-        {
-            return currentVal - step;
-        }
-    }
-
-    return targetVal;
-}
-
-
 
 void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry)
 {
