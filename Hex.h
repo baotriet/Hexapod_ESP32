@@ -40,6 +40,9 @@ word ServoMoveTime;        // Time for servo updates
 word PrevServoMoveTime;    // Previous time for the servo updates
 unsigned long controlLegTimeStart; // Start time of the calculation cycles
 //unsigned long controlLegTimeCurrent;   // End time of the calculation cycles
+// Time
+unsigned long lTimerStart; // Start time of the calculation cycles
+unsigned long lTimerEnd;   // End time of the calculation cycles
 
 // Parameters for smooth function
 unsigned long previousMillis = 0;
@@ -1494,6 +1497,9 @@ void loop()
   byte commandData[7];
   bool cmdDataReady = getCmd(commandData);
 
+  uint32_t lTimeWaitEnd;
+  lTimerStart = millis();
+
 #ifdef FOOT_SENSOR_ENABLED
   if (footSensorTimeOut && savedCommandData != NULL)
   {
@@ -1558,14 +1564,34 @@ void loop()
       ServoMoveTime = 50 + Hex.SpeedControl;
     }
     
-    controlLegTimeStart = millis();
-    while(timeStep < 1.0)
+    controlLegs();
+    // See if we need to sync our processor with the servo driver while walking to ensure the prev is completed
+    // before sending the next one
+
+    // Finding any incident of GaitPos/Rot <>0:
+    for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
     {
-      unsigned long controlLegTimeCurrent = millis();
-      timeStep = (controlLegTimeCurrent - controlLegTimeStart)/(float)ServoMoveTime;
-      controlLegs();
+      if ((GaitPosX[legNr] > cGPlimit) || (GaitPosX[legNr] < -cGPlimit) || (GaitPosZ[legNr] > cGPlimit) || (GaitPosZ[legNr] < -cGPlimit) || (GaitRotY[legNr] > cGPlimit) || (GaitRotY[legNr] < -cGPlimit))
+      {
+
+        bExtraCycle = NrLiftedPos + 1; // For making sure that we are using timed move until all legs are down
+        break;
+      }
     }
-    
+    Hex.bFeetOnTheGround = true;
+    // This code below is used to reduce the speed of hexapod, it will be fast without these lines below
+    if (bExtraCycle > 0)
+    {
+      bExtraCycle--;
+      fWalking = !(bExtraCycle == 0);
+
+      // Get endtime and calculate wait time
+      lTimeWaitEnd = lTimerStart + PrevServoMoveTime;
+
+      do
+      {
+        // Wait the appropriate time, call any background process while waiting...
+      } while (millis() < lTimeWaitEnd);
 #ifdef FOOT_SENSOR_ENABLED
       if (footSensor_checkAllSensor())
       {
@@ -1576,7 +1602,9 @@ void loop()
         footSensorTimeOut = true;
       }
 #endif // FOOT_SENSOR_ENABLED
+    }
   }
   // run 1 time to setup the robot
   Hex.bHexInit = true;
+  PrevServoMoveTime = ServoMoveTime;
 }
