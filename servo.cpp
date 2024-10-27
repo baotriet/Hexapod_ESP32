@@ -3,12 +3,13 @@
 
 static byte servoCh[NUM_OF_LEGS][NUM_SERVOS_PER_LEG] = {
     // c  f  t
-    {6, 7, 8}, // RR
-    {3, 4, 5}, // RM
-    {0, 1, 2}, // RF
-    {0, 1, 2}, // LR
-    {3, 4, 5}, // LM
-    {6, 7, 8}  // LF
+    {0, 1, 2}, // RR
+    {7, 6, 5}, // RM
+    {8, 9, 10}, // RF
+    {13, 14, 15},  // LR
+    {10, 9, 8}, // LM
+    {7, 6, 5} // LF
+    
 };
 
 void servo_setAngle(byte legNr, byte joint, int ServoAngle)
@@ -27,7 +28,7 @@ void servo_setAngle(byte legNr, byte joint, int ServoAngle)
 void servo_stop(byte legNr, byte joint)
 {
     unsigned int servoNr = legNr * NUM_SERVOS_PER_LEG + joint;
-    if (servoNr < NUM_SERVOS_PER_PCA)
+    if (servoNr < NUM_LEGS_PER_SIDE)
     {
         drvPwm_set(R_DRIVER, servoCh[legNr][joint], 0);
     }
@@ -39,7 +40,7 @@ void servo_stop(byte legNr, byte joint)
 
 void servo_stopLeg(byte legNr)
 {
-    if (legNr < (NUM_OF_LEGS/2))
+    if (legNr < NUM_LEGS_PER_SIDE)
     {
         drvPwm_set(R_DRIVER, servoCh[legNr][COXA], 0);
         drvPwm_set(R_DRIVER, servoCh[legNr][FERMUR], 0);

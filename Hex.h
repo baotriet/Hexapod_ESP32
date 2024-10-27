@@ -28,19 +28,23 @@
 #define BALANCE_DELAY 50
 #endif
 
-#ifdef FOOT_SENSOR_ENABLED
-enum footSensor
-{
-  GROUND,
-  LIFTING
-};
-static byte *savedCommandData;
-#endif // FOOT_SENSOR_ENABLED
-word ServoMoveTime;        // Time for servo updates
-word PrevServoMoveTime;    // Previous time for the servo updates
+#ifdef DEBUG_LEG
+char legName[6][5] = {"RR", "RM", "RF", "LR", "LM", "LF"};
+#endif
+
+// #ifdef FOOT_SENSOR_ENABLED
+// enum footSensor
+// {
+//   GROUND,
+//   LIFTING
+// };
+// static byte *savedCommandData;
+// #endif                             // FOOT_SENSOR_ENABLED
+word ServoMoveTime;                // Time for servo updates
+word PrevServoMoveTime;            // Previous time for the servo updates
 unsigned long controlLegTimeStart; // Start time of the calculation cycles
-//unsigned long controlLegTimeCurrent;   // End time of the calculation cycles
-// Time
+// unsigned long controlLegTimeCurrent;   // End time of the calculation cycles
+//  Time
 unsigned long lTimerStart; // Start time of the calculation cycles
 unsigned long lTimerEnd;   // End time of the calculation cycles
 
@@ -203,8 +207,9 @@ struct RobotStatus
   // Balance
   bool bBalanceMode;
   bool bBodyBalanceMode;
-  bool bSenseGround;
-
+  // #ifdef FOOT_SENSOR_ENABLED
+  //   bool bSenseGround;
+  // #endif
   // Camera
   bool bCameraStart;
 
@@ -219,9 +224,9 @@ struct RobotStatus
   byte bAdjustLegPositions;
   byte GaitStep; // Global Input Gait step
 
-#ifdef FOOT_SENSOR_ENABLED
-  enum footSensor legState;
-#endif // FOOT_SENSOR_ENABLED
+  // #ifdef FOOT_SENSOR_ENABLED
+  //   enum footSensor legState;
+  // #endif // FOOT_SENSOR_ENABLED
 } Hex;
 
 long OffsetX[NUM_OF_LEGS]; // Distance X from center of the body to the coxa
@@ -250,35 +255,16 @@ void selectGait()
   // Hex Gaits
   //  Speed, Steps, Lifted, Front Down, Lifted Factor, Half Height, On Ground,
   //                      { RR, <RM> RF, LR, <LM>, LF}
-
-  if (Hex.GaitType == 0)
-  { // Ripple Gait 12 steps (one leg at a time alt. between sides)
-    GaitLegNr[RR] = 7;
-    GaitLegNr[RM] = 11;
-    GaitLegNr[RF] = 3;
-    GaitLegNr[LR] = 1;
-    GaitLegNr[LM] = 5;
-    GaitLegNr[LF] = 9;
-    //        GaitLegNr[]={7,11,3,1,5,9};
-
-    StepsInGait = 12;
-    NrLiftedPos = 3;
-    FrontDownPos = 2;
-    LiftDivFactor = 2;
-    TLDivFactor = 8;
-    HalfLiftHeight = 3;
-    NomGaitSpeed = DEFAULT_SLOW_GAIT;
-    Hex.GaitType = 0;
-  }
-  else if (Hex.GaitType == 1)
-  { // Tripod 8
-    GaitLegNr[RR] = 1;
-    GaitLegNr[RM] = 5;
-    GaitLegNr[RF] = 1;
+  switch (Hex.GaitType)
+  {
+  case 0:
+    // Tripod 8
     GaitLegNr[LR] = 5;
+    GaitLegNr[RF] = 1;
     GaitLegNr[LM] = 1;
+    GaitLegNr[RR] = 1;
     GaitLegNr[LF] = 5;
-    //        GaitLegNr[]={1,5,1,5,1,5};
+    GaitLegNr[RM] = 5;
 
     StepsInGait = 8;
     NrLiftedPos = 3;
@@ -287,17 +273,31 @@ void selectGait()
     TLDivFactor = 4;
     HalfLiftHeight = 3;
     NomGaitSpeed = DEFAULT_SLOW_GAIT;
-    Hex.GaitType = 1;
-  }
-  else if (Hex.GaitType == 2)
-  { // Triple Tripod 12 steps
-    GaitLegNr[RR] = 5;
-    GaitLegNr[RM] = 10;
+    break;
+  case 1:
+    // Ripple Gait 12 steps (one leg at a time alt. between sides)
+    GaitLegNr[LR] = 1;
     GaitLegNr[RF] = 3;
-    GaitLegNr[LR] = 11;
-    GaitLegNr[LM] = 4;
+    GaitLegNr[LM] = 5;
+    GaitLegNr[RR] = 7;
     GaitLegNr[LF] = 9;
-    //        GaitLegNr[]={5,10,3,11,4,9};
+    GaitLegNr[RM] = 11;
+
+    StepsInGait = 12;
+    NrLiftedPos = 3;
+    FrontDownPos = 2;
+    LiftDivFactor = 2;
+    TLDivFactor = 8;
+    HalfLiftHeight = 3;
+    NomGaitSpeed = DEFAULT_SLOW_GAIT;
+    break;
+  case 2: // Triple Tripod 12 steps
+    GaitLegNr[RF] = 3;
+    GaitLegNr[LM] = 4;
+    GaitLegNr[RR] = 5;
+    GaitLegNr[LF] = 9;
+    GaitLegNr[RM] = 10;
+    GaitLegNr[LR] = 11;
 
     StepsInGait = 12;
     NrLiftedPos = 3;
@@ -306,17 +306,14 @@ void selectGait()
     TLDivFactor = 8;
     HalfLiftHeight = 3;
     NomGaitSpeed = DEFAULT_GAIT_SPEED;
-    Hex.GaitType = 2;
-  }
-  else if (Hex.GaitType == 3)
-  { /// Triple Tripod 16 steps, use 5 lifted positions
-    GaitLegNr[RR] = 6;
-    GaitLegNr[RM] = 13;
+    break;
+  case 3: /// Triple Tripod 16 steps, use 5 lifted positions
     GaitLegNr[RF] = 4;
-    GaitLegNr[LR] = 14;
     GaitLegNr[LM] = 5;
+    GaitLegNr[RR] = 6;
     GaitLegNr[LF] = 12;
-    //        GaitLegNr[]={6,13,4,14,5,12};
+    GaitLegNr[RM] = 13;
+    GaitLegNr[LR] = 14;
 
     StepsInGait = 16;
     NrLiftedPos = 5;
@@ -325,17 +322,14 @@ void selectGait()
     TLDivFactor = 10;
     HalfLiftHeight = 1;
     NomGaitSpeed = DEFAULT_GAIT_SPEED;
-    Hex.GaitType = 3;
-  }
-  else if (Hex.GaitType == 4)
-  { // Wave 24 steps
-    GaitLegNr[RR] = 13;
-    GaitLegNr[RM] = 17;
-    GaitLegNr[RF] = 21;
+    break;
+  case 4: // Wave 24 steps
     GaitLegNr[LR] = 1;
+    GaitLegNr[RF] = 21;
     GaitLegNr[LM] = 5;
+    GaitLegNr[RR] = 13;
     GaitLegNr[LF] = 9;
-    //        GaitLegNr[]={13,17,21,1,5,9};
+    GaitLegNr[RM] = 17;
 
     StepsInGait = 24;
     NrLiftedPos = 3;
@@ -344,17 +338,14 @@ void selectGait()
     TLDivFactor = 20;
     HalfLiftHeight = 3;
     NomGaitSpeed = DEFAULT_SLOW_GAIT;
-    Hex.GaitType = 4;
-  }
-  else if (Hex.GaitType == 5)
-  { // Tripod 6 steps
-    GaitLegNr[RR] = 1;
-    GaitLegNr[RM] = 4;
-    GaitLegNr[RF] = 1;
+    break;
+  case 5: // Tripod 6 steps
     GaitLegNr[LR] = 4;
+    GaitLegNr[RF] = 1;
     GaitLegNr[LM] = 1;
+    GaitLegNr[RR] = 1;
     GaitLegNr[LF] = 4;
-    //        GaitLegNr[]={1,4,1,4,1,4};
+    GaitLegNr[RM] = 4;
 
     StepsInGait = 6;
     NrLiftedPos = 2;
@@ -363,7 +354,9 @@ void selectGait()
     TLDivFactor = 4;
     HalfLiftHeight = 1;
     NomGaitSpeed = DEFAULT_GAIT_SPEED;
-    Hex.GaitType = 5;
+    break;
+  default:
+    break;
   }
 }
 
@@ -444,7 +437,6 @@ void calculateGait(byte legNr)
  */
 void calculateGaitSeq(void)
 {
-  byte legNr;
   // Check if the Gait is in motion
   if (fWalking || (Hex.ForceGaitStepCnt != 0))
     TravelRequest = 1; // Is walking or was walking...
@@ -461,7 +453,7 @@ void calculateGaitSeq(void)
 
   // Calculate Gait sequence
   LastLeg = 0;
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {                 // for all legs
     if (legNr == 5) // last leg
       LastLeg = 1;
@@ -548,7 +540,6 @@ void balanceBody(void)
  */
 void controlSingleLeg(void)
 {
-  byte legNr;
   // Check if all legs are down
   if ((legPosY[RF] == (short)pgm_read_word(&cInitPosY[RF])) && (legPosY[RM] == (short)pgm_read_word(&cInitPosY[RM])) && (legPosY[RR] == (short)pgm_read_word(&cInitPosY[RR])) && (legPosY[LR] == (short)pgm_read_word(&cInitPosY[LR])) && (legPosY[LM] == (short)pgm_read_word(&cInitPosY[LM])) && (legPosY[LF] == (short)pgm_read_word(&cInitPosY[LF])))
   {
@@ -585,15 +576,14 @@ void controlSingleLeg(void)
   { // All legs to init position
     if (!AllDown)
     {
-      for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+      for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
       {
         legPosX[legNr] = (short)pgm_read_word(&cInitPosX[legNr]);
         legPosY[legNr] = (short)pgm_read_word(&cInitPosY[legNr]);
         legPosZ[legNr] = (short)pgm_read_word(&cInitPosZ[legNr]);
       }
     }
-    if (PrevSelectedLeg != 255)
-      PrevSelectedLeg = 255;
+    PrevSelectedLeg = 255;
   }
 }
 
@@ -611,20 +601,20 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
   short *sinCos4; // return sin4 and cos4
   short SinA4;    // Sin buffer for BodyRotX calculations
   short CosA4;    // Cos buffer for BodyRotX calculations
-  short SinB4;    // Sin buffer for BodyRotX calculations
-  short CosB4;    // Cos buffer for BodyRotX calculations
+  short SinB4;    // Sin buffer for BodyRotZ calculations
+  short CosB4;    // Cos buffer for BodyRotZ calculations
   short SinG4;    // Sin buffer for BodyRotY calculations
   short CosG4;    // Cos buffer for BodyRotY calculations
   short CPR_X;    // Total X distance between the center of the body and the feet
   short CPR_Z;    // Total Z distance between the center of the body and the feet
   short CPR_Y;    // Total Y distance between the center of the body and the feet
-  double bodyBalance[3] = {0};
-  double tempBodyBalance[3];
+  float bodyBalance[3];
+  float tempBodyBalance[3];
   pid_update(tempBodyBalance, 3);
 #ifdef MPU_ENABLED
   if (Hex.bBodyBalanceMode)
   {
-    *bodyBalance = *tempBodyBalance;
+    memcpy(bodyBalance, tempBodyBalance, 3 * sizeof(tempBodyBalance[0]));
   }
 #endif // MPU_ENABLED
 
@@ -722,8 +712,7 @@ void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
  */
 void limitAngles(void)
 {
-  byte legNr;
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
     coxaAngle[legNr] = _min(_max(coxaAngle[legNr], (short)pgm_read_word(&cCoxaMin1[legNr])),
                             (short)pgm_read_word(&cCoxaMax1[legNr])) +
@@ -743,9 +732,7 @@ void limitAngles(void)
  */
 void initialize()
 {
-  byte legNr;
-
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
     legPosX[legNr] = (short)pgm_read_word(&cInitPosX[legNr]); // Set start positions for each leg
     legPosZ[legNr] = (short)pgm_read_word(&cInitPosZ[legNr]);
@@ -773,12 +760,14 @@ void initialize()
   Hex.TravelLengthZ = 0;
   Hex.TravelRotationY = 0;
 
-  Hex.GaitType = 1;
+  Hex.GaitType = 0;
   Hex.bBalanceMode = false;
   Hex.bBodyBalanceMode = false;
-  Hex.bSenseGround = false;
+  // #ifdef FOOT_SENSOR_ENABLED
+  //   Hex.bSenseGround = false;
+  // #endif
   Hex.bCameraStart = false;
-  Hex.LegLiftHeight = 50;
+  Hex.LegLiftHeight = 60;
   Hex.ForceGaitStepCnt = 0; // added to try to adjust starting positions depending on height...
   Hex.GaitStep = 1;
   selectGait();
@@ -863,12 +852,11 @@ void adjustLegPosToBodyHeight(void)
 
 void updateServo()
 {
-  byte legNr;
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
-      coxaAngleTemp[legNr] = helperFunc_smoothBasedVal(coxaAngleTemp[legNr], coxaAngle[legNr], smoothBaseDiv, smoothThreshold);
-      femurAngleTemp[legNr] = helperFunc_smoothBasedVal(femurAngleTemp[legNr], femurAngle[legNr], smoothBaseDiv, smoothThreshold);
-      tibiaAngleTemp[legNr] = helperFunc_smoothBasedVal(tibiaAngleTemp[legNr], tibiaAngle[legNr], smoothBaseDiv, smoothThreshold);
+    coxaAngleTemp[legNr] = helperFunc_smoothBasedVal(coxaAngleTemp[legNr], coxaAngle[legNr], smoothBaseDiv, smoothThreshold);
+    femurAngleTemp[legNr] = helperFunc_smoothBasedVal(femurAngleTemp[legNr], femurAngle[legNr], smoothBaseDiv, smoothThreshold);
+    tibiaAngleTemp[legNr] = helperFunc_smoothBasedVal(tibiaAngleTemp[legNr], tibiaAngle[legNr], smoothBaseDiv, smoothThreshold);
   }
 }
 
@@ -878,82 +866,44 @@ void updateServo()
  */
 void controlLegs()
 {
-  byte legNr;
 #ifndef DEBUG_LEG
   updateServo();
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
   {
-    if (legNr < 3) // right side
-    {
-      servo_setAngle(legNr, COXA, coxaAngleTemp[legNr]);
-      servo_setAngle(legNr, FERMUR, -femurAngleTemp[legNr]);
-      servo_setAngle(legNr, TIBIA, tibiaAngleTemp[legNr]);
-    }
-    else // left side
-    {
-      servo_setAngle(legNr, COXA, -coxaAngleTemp[legNr]);
-      servo_setAngle(legNr, FERMUR, femurAngleTemp[legNr]);
-      servo_setAngle(legNr, TIBIA, -tibiaAngleTemp[legNr]);
-    }
+    servo_setAngle(legNr, COXA, -coxaAngleTemp[legNr]);
+    servo_setAngle(legNr, FERMUR, femurAngleTemp[legNr]);
+    servo_setAngle(legNr, TIBIA, -tibiaAngleTemp[legNr]);
+  }
+  for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
+  {
+    servo_setAngle(legNr, COXA, coxaAngleTemp[legNr]);
+    servo_setAngle(legNr, FERMUR, -femurAngleTemp[legNr]);
+    servo_setAngle(legNr, TIBIA, tibiaAngleTemp[legNr]);
   }
 #else  // DEBUG_LEG
-  for (legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
+    Serial.print(legName[legNr][5]);
+    Serial.print(F("\t"));
     switch (legNr)
     {
     case 0: // RR
-      Serial.print(F("RR"));
-      Serial.print(F("\t"));
-      Serial.print(coxaAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.print(-femurAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.println(-tibiaAngle[legNr]);
-      break;
     case 1: // RM
-      Serial.print(F("RM"));
-      Serial.print(F("\t"));
-      Serial.print(coxaAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.print(-femurAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.println(-tibiaAngle[legNr]);
-      break;
     case 2: // RF
-      Serial.print(F("RF"));
+      Serial.print(-coxaAngle[legNr]);
       Serial.print(F("\t"));
-      Serial.print(coxaAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.print(-femurAngle[legNr]);
+      Serial.print(femurAngle[legNr]);
       Serial.print(F("\t"));
       Serial.println(-tibiaAngle[legNr]);
       break;
     case 3: // LR
-      Serial.print(F("LR"));
-      Serial.print(F("\t"));
-      Serial.print(-coxaAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.print(-femurAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.println(-tibiaAngle[legNr]);
-      break;
     case 4: // LM
-      Serial.print(F("LM"));
-      Serial.print(F("\t"));
-      Serial.print(-coxaAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.print(-femurAngle[legNr]);
-      Serial.print(F("\t"));
-      Serial.println(-tibiaAngle[legNr]);
-      break;
     case 5: // LF
-      Serial.print(F("LF"));
-      Serial.print(F("\t"));
-      Serial.print(-coxaAngle[legNr]);
+      Serial.print(coxaAngle[legNr]);
       Serial.print(F("\t"));
       Serial.print(-femurAngle[legNr]);
       Serial.print(F("\t"));
-      Serial.println(-tibiaAngle[legNr]);
+      Serial.println(tibiaAngle[legNr]);
       break;
     default:
       break;
@@ -979,25 +929,6 @@ void controlGripHand(int angle)
 void offHex(void)
 {
   // Turn off
-  //  Hex.BodyPosX = 0;
-  //  Hex.BodyPosY = 0;
-  //  Hex.BodyPosZ = 0;
-  //  Hex.BodyRotX = 0;
-  //  Hex.BodyRotY = 0;
-  //  Hex.BodyRotZ = 0;
-  //  Hex.TravelLengthX = 0;
-  //  Hex.TravelLengthZ = 0;
-  //  Hex.TravelRotationY = 0;
-  //  g_BodyYOffset = 0;
-  //  g_BodyYShift = 0;
-  //  Hex.SelectedLeg = 255;
-  //  Hex.bHexON = false;
-  //  adjustLegPosToBodyHeight();  // Put main workings into main program file
-  //  initialize();
-  //  delay(10);
-  //  limitAngles();
-  //  controlLegs();
-  //  delay(500);
   drvPwm_goSleep();
 }
 
@@ -1020,9 +951,9 @@ void doCommand(byte *cmd)
   checksum = (checksum >> 8) + (checksum & 0xFF);
   //	UARTprintf("crc = %x\n",checksum);
   if (cmd[0] == checksum
-#ifdef FOOT_SENSOR_ENABLED
+      // #ifdef FOOT_SENSOR_ENABLED
 
-#endif
+      // #endif
   )
   {
     cError = 0;
@@ -1036,7 +967,7 @@ void doCommand(byte *cmd)
     helperFunc_reverseCmd(&lx, &ly, &rx, &ry);
 #endif
 
-#ifdef FOOT_SENSOR_ENABLED
+    // #ifdef FOOT_SENSOR_ENABLED
     // if (footSensorTimeOut && savedCommandData != NULL && Hex.OperationMode == MODE_WALK)
     // {
     //   dwButton = 0;
@@ -1057,19 +988,19 @@ void doCommand(byte *cmd)
     //   Serial.println(ry);
     // }
     // else
-#endif
-    {
-      Serial.print(F("normal data: "));
-      Serial.print(dwButton);
-      Serial.print(F(" "));
-      Serial.print(lx);
-      Serial.print(F(" "));
-      Serial.print(ly);
-      Serial.print(F(" "));
-      Serial.print(rx);
-      Serial.print(F(" "));
-      Serial.println(ry);
-    }
+    // #endif
+    // {
+    //   Serial.print(F("normal data: "));
+    //   Serial.print(dwButton);
+    //   Serial.print(F(" "));
+    //   Serial.print(lx);
+    //   Serial.print(F(" "));
+    //   Serial.print(ly);
+    //   Serial.print(F(" "));
+    //   Serial.print(rx);
+    //   Serial.print(F(" "));
+    //   Serial.println(ry);
+    // }
     // Turn ON/OFF
     if (BUTTON_PRESSED(dwButton, INPUT_HEX_TOGGLE))
     {
@@ -1116,7 +1047,11 @@ void doCommand(byte *cmd)
 
       if (BUTTON_PRESSED(dwButton, INPUT_BALANCE_TOGGLE))
       {
-        if (!Hex.bBalanceMode && !Hex.bSenseGround)
+        if (!Hex.bBalanceMode
+            // #ifdef FOOT_SENSOR_ENABLED
+            //         && !Hex.bSenseGround
+            // #endif
+        )
         {
           Hex.bBalanceMode = true;
         }
@@ -1125,19 +1060,19 @@ void doCommand(byte *cmd)
           Hex.bBalanceMode = false;
         }
       }
-
-      if (BUTTON_PRESSED(dwButton, INPUT_TIP_SENSOR))
-      {
-        if (!Hex.bBalanceMode && !Hex.bSenseGround)
-        {
-          Hex.bSenseGround = true;
-        }
-        else
-        {
-          Hex.bSenseGround = false;
-        }
-      }
-
+      // #ifdef FOOT_SENSOR_ENABLED
+      //       if (BUTTON_PRESSED(dwButton, INPUT_TIP_SENSOR))
+      //       {
+      //         if (!Hex.bBalanceMode && !Hex.bSenseGround)
+      //         {
+      //           Hex.bSenseGround = true;
+      //         }
+      //         else
+      //         {
+      //           Hex.bSenseGround = false;
+      //         }
+      //       }
+      // #endif
       if (BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE))
       {
         if (g_BodyYOffset > 0)
@@ -1175,10 +1110,10 @@ void doCommand(byte *cmd)
       if (BUTTON_PRESSED(dwButton, INPUT_SPEED_DOWN))
       {
         Hex.SpeedControl += 50;
-        if (Hex.SpeedControl > 200)
-        {
-          Hex.SpeedControl = 200;
-        }
+        // if (Hex.SpeedControl > 200)
+        // {
+        //   Hex.SpeedControl = 200;
+        // }
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_GRIP_CLOSE))
@@ -1222,7 +1157,7 @@ void doCommand(byte *cmd)
           if (abs(Hex.TravelLengthX) < CONFIG_TRAVEL_DEAD_ZONE && abs(Hex.TravelLengthZ) < CONFIG_TRAVEL_DEAD_ZONE && abs(Hex.TravelRotationY * 2) < CONFIG_TRAVEL_DEAD_ZONE)
           {
             Hex.GaitType += 1;
-            if (Hex.GaitType > GAIT_TYPE - 1)
+            if (Hex.GaitType >= GAIT_TYPE)
               Hex.GaitType = 0;
           }
           selectGait();
@@ -1250,18 +1185,17 @@ void doCommand(byte *cmd)
           Hex.TravelLengthX = Hex.TravelLengthX / 2;
           Hex.TravelLengthZ = Hex.TravelLengthZ / 2;
         }
-
-        Hex.TipSensorTravelLengthX = Hex.TravelLengthX;
-        Hex.TipSensorTravelLengthZ = Hex.TravelLengthZ;
-        Hex.bTipSensorSavedTravel = true;
-
-        if (Hex.bSenseGround && Hex.bTipSensorSavedTravel)
-        {
-          Hex.TravelLengthX = Hex.TipSensorTravelLengthX;
-          Hex.TravelLengthZ = Hex.TipSensorTravelLengthZ;
-          Hex.bTipSensorSavedTravel = false;
-        }
-
+        // #ifdef FOOT_SENSOR_ENABLED
+        // Hex.TipSensorTravelLengthX = Hex.TravelLengthX;
+        // Hex.TipSensorTravelLengthZ = Hex.TravelLengthZ;
+        // Hex.bTipSensorSavedTravel = true;
+        //         if (Hex.bSenseGround && Hex.bTipSensorSavedTravel)
+        //         {
+        //           Hex.TravelLengthX = Hex.TipSensorTravelLengthX;
+        //           Hex.TravelLengthZ = Hex.TipSensorTravelLengthZ;
+        //           Hex.bTipSensorSavedTravel = false;
+        //         }
+        // #endif
         Hex.TravelRotationY = -(rx - 128) / 4; // Right Stick Left/Right
       }
 
@@ -1292,7 +1226,7 @@ void doCommand(byte *cmd)
         }
         Hex.SLLegX = (lx - 128) / 2;
         Hex.SLLegZ = (ly - 128) / 2;
-        Hex.SLLegY = (ry - 128) / 10;
+        Hex.SLLegY = (ry - 128) / 2;
 
         // Hold single leg in place
         if (BUTTON_PRESSED(dwButton, INPUT_OPT_R2))
@@ -1326,7 +1260,7 @@ void doBalance()
 {
   if (Hex.bBalanceMode)
   {
-    for (byte legNr = 0; legNr < (NUM_OF_LEGS / 2); ++legNr)
+    for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
     { // balance calculations for all Right legs
 
       //              DoBackgroundProcess();
@@ -1335,7 +1269,7 @@ void doBalance()
                          (legPosY[legNr] - (short)pgm_read_word(&cInitPosY[legNr])) + GaitPosY[legNr], legNr);
     }
 
-    for (byte legNr = (NUM_OF_LEGS / 2); legNr < NUM_OF_LEGS; ++legNr)
+    for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
     { // balance calculations for all Right legs
       //              DoBackgroundProcess();
       calculateBalOneLeg(legPosX[legNr] + GaitPosX[legNr],
@@ -1353,7 +1287,7 @@ void doBalance()
 void doKinetic()
 {
   // Do IK for all Right legs
-  for (byte legNr = 0; legNr < (NUM_OF_LEGS / 2); ++legNr)
+  for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
   {
     //            DoBackgroundProcess();
     doBodyFK(-legPosX[legNr] + Hex.BodyPosX + GaitPosX[legNr] - TotalTransX,
@@ -1366,7 +1300,7 @@ void doKinetic()
   }
 
   // Do IK for all Left legs
-  for (byte legNr = (NUM_OF_LEGS / 2); legNr < NUM_OF_LEGS; ++legNr)
+  for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
   {
     //            DoBackgroundProcess();
     doBodyFK(legPosX[legNr] - Hex.BodyPosX + GaitPosX[legNr] - TotalTransX,
@@ -1375,7 +1309,7 @@ void doKinetic()
              GaitRotY[legNr], legNr);
     doLegIK(legPosX[legNr] + Hex.BodyPosX - BodyFKPosX + GaitPosX[legNr] - TotalTransX,
             legPosY[legNr] + Hex.BodyPosY - BodyFKPosY + GaitPosY[legNr] - TotalTransY,
-            legPosZ[legNr] + Hex.BodyPosZ - BodyFKPosY + GaitPosZ[legNr] - TotalTransZ, legNr);
+            legPosZ[legNr] + Hex.BodyPosZ - BodyFKPosZ + GaitPosZ[legNr] - TotalTransZ, legNr);
   }
 }
 
@@ -1464,7 +1398,7 @@ void setup()
 
   initialize();
   limitAngles();
-  // controlLegs();
+  controlLegs();
   delay(200);
   // after motor init to calibrate the sensor
 
@@ -1473,10 +1407,10 @@ void setup()
   delay(10);
 #endif // MPU_ENABLED
 
-#ifdef FOOT_SENSOR_ENABLED
-  footSensor_init();
-  delay(10);
-#endif // FOOT_SENSOR_ENABLED
+  // #ifdef FOOT_SENSOR_ENABLED
+  //   footSensor_init();
+  //   delay(10);
+  // #endif // FOOT_SENSOR_ENABLED
 
   pinMode(LED_RED_GPIO, OUTPUT);
   for (byte i = 5; i > 0; --i)
@@ -1500,17 +1434,17 @@ void loop()
   uint32_t lTimeWaitEnd;
   lTimerStart = millis();
 
-#ifdef FOOT_SENSOR_ENABLED
-  if (footSensorTimeOut && savedCommandData != NULL)
-  {
-    commandData = savedCommandData;
-    cmdDataReady = true;
-  }
-  else
-  {
-    savedCommandData = commandData;
-  }
-#endif // FOOT_SENSOR_ENABLED
+  // #ifdef FOOT_SENSOR_ENABLED
+  //   if (footSensorTimeOut && savedCommandData != NULL)
+  //   {
+  //     commandData = savedCommandData;
+  //     cmdDataReady = true;
+  //   }
+  //   else
+  //   {
+  //     savedCommandData = commandData;
+  //   }
+  // #endif // FOOT_SENSOR_ENABLED
 
   if (cmdDataReady)
   {
@@ -1522,7 +1456,6 @@ void loop()
 #endif
     doCommand(commandData);
   }
-
   controlSingleLeg();
 
   // Gait
@@ -1563,7 +1496,7 @@ void loop()
     { // Movement speed excl. Walking
       ServoMoveTime = 50 + Hex.SpeedControl;
     }
-    
+
     controlLegs();
     // See if we need to sync our processor with the servo driver while walking to ensure the prev is completed
     // before sending the next one
@@ -1590,18 +1523,19 @@ void loop()
 
       do
       {
+        controlLegs();
         // Wait the appropriate time, call any background process while waiting...
       } while (millis() < lTimeWaitEnd);
-#ifdef FOOT_SENSOR_ENABLED
-      if (footSensor_checkAllSensor())
-      {
-        footSensorTimeOut = false;
-      }
-      else
-      {
-        footSensorTimeOut = true;
-      }
-#endif // FOOT_SENSOR_ENABLED
+      // #ifdef FOOT_SENSOR_ENABLED
+      //       if (footSensor_checkAllSensor())
+      //       {
+      //         footSensorTimeOut = false;
+      //       }
+      //       else
+      //       {
+      //         footSensorTimeOut = true;
+      //       }
+      // #endif // FOOT_SENSOR_ENABLED
     }
   }
   // run 1 time to setup the robot

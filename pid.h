@@ -4,6 +4,6 @@
 #include "setup.h"
 
 void pid_init();
-const double *pid_update(double *output, int size);
+const float *pid_update(float *output, int size);
 
 #endif // PID_H_

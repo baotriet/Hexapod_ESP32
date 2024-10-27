@@ -5,7 +5,7 @@
 #include "http.h"
 #include "setup.h"
 
-StaticJsonDocument<512> doc;
+JsonDocument doc;
 
 static bool httpDataReady = false;
 static byte httpInputData[7];
@@ -30,7 +30,7 @@ static esp_err_t data_handler(httpd_req_t *req) {
 
   buf[ret] = '\0';
 
-  DynamicJsonDocument doc(bufferSize);
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, buf);
   if (error) {
 #ifdef DEBUG_HTTP_DATA

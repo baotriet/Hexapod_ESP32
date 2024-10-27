@@ -33,8 +33,8 @@ void drvPwm_init()
   // /* Wake the device up */
   pwmRight.begin();
   pwmLeft.begin();
-  pwmRight.setOscillatorFrequency(16000000);
-  pwmLeft.setOscillatorFrequency(16000000);
+  pwmRight.setOscillatorFrequency(26450000);
+  pwmLeft.setOscillatorFrequency(26240000);
   pwmRight.setPWMFreq(PWM_FREQ); // Analog servos run at ~50 Hz updates
   pwmLeft.setPWMFreq(PWM_FREQ);  // Analog servos run at ~50 Hz updates
 }

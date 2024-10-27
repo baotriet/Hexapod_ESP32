@@ -189,7 +189,7 @@ short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv,
 
 void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry)
 {
-  *lx = *lx;
+  // *lx = *lx;
   *ly = 255 - *ly;
   *rx = 255 - *rx;
   *ry = 255 - *ry;

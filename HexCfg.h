@@ -25,36 +25,14 @@
 
 // PWM parameters
 #define PWM_FREQ 50
-#define MIN_PULSE 210
-#define MAX_PULSE 800
+#define MIN_PULSE 80
+#define MAX_PULSE 512
 
-#define L_DRIVER 0x41
-#define R_DRIVER 0x40
+#define L_DRIVER 0x40
+#define R_DRIVER 0x41
 
-
-#define RRearCoxaServo 0
-#define RRearFemurServo 1
-#define RRearTibiaServo 2
-
-#define RCenterCoxaServo 3
-#define RCenterFemurServo 4
-#define RCenterTibiaServo 5
-
-#define RFrontCoxaServo 6
-#define RFrontFemurServo 7
-#define RFrontTibiaServo 8
-
-#define LRearCoxaServo 9
-#define LRearFemurServo 10
-#define LRearTibiaServo 11
-
-#define LCenterCoxaServo 12
-#define LCenterFemurServo 13
-#define LCenterTibiaServo 14
-
-#define LFrontCoxaServo 15
-#define LFrontFemurServo 16
-#define LFrontTibiaServo 17
+#define SDA_PIN 15
+#define SCL_PIN 14
 
 #define RR 0
 #define RM 1
@@ -71,6 +49,7 @@
 #define STRING_INPUT_SIZE 50
 
 #define NUM_OF_LEGS 6
+#define NUM_LEGS_PER_SIDE 3
 #define NUM_SERVOS_PER_LEG 3
 #define NUM_OF_SERVO 18
 #define NUM_SERVOS_PER_PCA 9
@@ -96,7 +75,7 @@
 #define cLMCoxaAngle1 (0)     //Default Coxa setup angle, decimals = 1
 #define cLFCoxaAngle1 (600)   //Default Coxa setup angle, decimals = 1
 
-#define CHexInitXZ 65
+#define CHexInitXZ 60
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))    // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866))  // sin(60) = .866
 #define CHexInitY 50                                     //Typical standing height (body above ground) in [mm]
@@ -125,9 +104,9 @@
 #define cLFInitPosY CHexInitY
 #define cLFInitPosZ -CHexInitXZSin60
 
-#define cXXCoxaLength 28 
+#define cXXCoxaLength 23 
 #define cXXFemurLength 50
-#define cXXTibiaLength 80
+#define cXXTibiaLength 90
 
 #define cRRCoxaLength cXXCoxaLength  //Right Rear leg
 #define cRRFemurLength cXXFemurLength
@@ -153,9 +132,9 @@
 #define cLFFemurLength cXXFemurLength
 #define cLFTibiaLength cXXTibiaLength
 
-#define HALF_BODY_LENGHT 73
-#define HALF_BODY_MIDDLE_WIDTH 66
-#define HALF_BODY_FR_WIDTH 55
+#define HALF_BODY_LENGHT 65
+#define HALF_BODY_MIDDLE_WIDTH 73
+#define HALF_BODY_FR_WIDTH 37
 
 #define cRROffsetX -HALF_BODY_FR_WIDTH  //Distance X from center of the body to the Right Rear coxa
 #define cRROffsetZ HALF_BODY_LENGHT     //Distance Z from center of the body to the Right Rear coxa
@@ -179,8 +158,8 @@
 #define COXA_MaxANG 800
 #define FEMUR_MinANG -800
 #define FEMUR_MaxANG 800
-#define TIBIA_MinANG -600
-#define TIBIA_MaxANG 600
+#define TIBIA_MinANG -800
+#define TIBIA_MaxANG 800
 //--------------------------------------------------------------------
 //[MIN/MAX ANGLES]
 #define cRRCoxaMin1 COXA_MinANG  //Mechanical limits of the Right Rear Leg, decimals = 1
@@ -233,8 +212,8 @@
 #define MAX_BODY_Y 115
 
 #ifdef DEFINE_HEX_GLOBALS
-const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 80, 65 };
-const byte g_abHexMaxBodyY[] PROGMEM = { CHexInitY, 70, MAX_BODY_Y };
+const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 73, 100 };
+const byte g_abHexMaxBodyY[] PROGMEM = { CHexInitY, 85, MAX_BODY_Y };
 #else
 extern const byte g_abHexIntXZ[];
 extern const byte g_abHexMaxBodyY[];
@@ -254,8 +233,8 @@ enum {
 // Left: CW +   CCW -        Right: CW + CCW -
 const int CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 // Left: Up -  Down +      Right: Up + Down -
-const int FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
+const int FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 // Left: Up +  Down -       Right: Up + Down -
-const int TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
+const int TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
 
 #endif /* HEXCFG_H_ */

@@ -2,6 +2,7 @@
 #include "Wire.h"
 #include "mpu6050.h"
 #include "setup.h"
+#include "HexCfg.h"
 
 MPU6050 mpu(Wire);
 
@@ -15,7 +16,6 @@ float mpu6050_getAngle(char Axis) {
     case 'X':
       getAngle = mpu.getAngleX();
       break;
-      
     case 'Y':
       getAngle = mpu.getAngleY();
       break;
