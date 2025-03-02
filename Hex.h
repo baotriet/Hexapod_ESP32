@@ -8,9 +8,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
-#include <string.h>
+#include <Wire.h>
 
-#include "drvPwm.h"
 #include "HexCfg.h"
 #include "HexInput.h"
 #include "bluetooth.h"
@@ -19,10 +18,12 @@
 #include "mqtt.h"
 #include "http.h"
 #include "camera.h"
-#include "myWifi.h"
+#include "wifey.h"
 #include "footSensor.h"
 #include "helperFunc.h"
 #include "servo.h"
+#include "battMan.h"
+#include "driver/buzzer.h"
 
 #ifndef BALANCE_DELAY
 #define BALANCE_DELAY 50
@@ -850,7 +851,7 @@ void adjustLegPosToBodyHeight(void)
 #endif // CNT_HEX_INITS
 }
 
-void updateServo()
+void updateServoAngle()
 {
   for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
@@ -867,18 +868,21 @@ void updateServo()
 void controlLegs()
 {
 #ifndef DEBUG_LEG
-  updateServo();
-  for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
+  updateServoAngle();
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
-    servo_setAngle(legNr, COXA, -coxaAngleTemp[legNr]);
-    servo_setAngle(legNr, FERMUR, femurAngleTemp[legNr]);
-    servo_setAngle(legNr, TIBIA, -tibiaAngleTemp[legNr]);
-  }
-  for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
-  {
-    servo_setAngle(legNr, COXA, coxaAngleTemp[legNr]);
-    servo_setAngle(legNr, FERMUR, -femurAngleTemp[legNr]);
-    servo_setAngle(legNr, TIBIA, tibiaAngleTemp[legNr]);
+    if (legNr < NUM_LEGS_PER_SIDE)
+    {
+      servo_setAngle(legNr, COXA, -coxaAngleTemp[legNr]);
+      servo_setAngle(legNr, FERMUR, femurAngleTemp[legNr]);
+      servo_setAngle(legNr, TIBIA, -tibiaAngleTemp[legNr]);
+    }
+    else
+    {
+      servo_setAngle(legNr, COXA, coxaAngleTemp[legNr]);
+      servo_setAngle(legNr, FERMUR, -femurAngleTemp[legNr]);
+      servo_setAngle(legNr, TIBIA, tibiaAngleTemp[legNr]);
+    }
   }
 #else  // DEBUG_LEG
   for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
@@ -920,16 +924,6 @@ void controlLegs()
 void controlGripHand(int angle)
 {
   // servo_setAngle(R_DRIVER, 15, 18, angle);
-}
-
-/**
- * @brief Turn off the robot
- *
- */
-void offHex(void)
-{
-  // Turn off
-  drvPwm_goSleep();
 }
 
 /**
@@ -1006,7 +1000,7 @@ void doCommand(byte *cmd)
     {
       if (Hex.bHexON)
       {
-        offHex();
+        // offHex();
       }
       else
       {
@@ -1247,7 +1241,7 @@ void doCommand(byte *cmd)
     cError++;
     if (cError == 3)
     {
-      offHex();
+      // offHex();
     }
   }
 }
@@ -1261,17 +1255,16 @@ void doBalance()
   if (Hex.bBalanceMode)
   {
     for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
-    { // balance calculations for all Right legs
-
-      //              DoBackgroundProcess();
+    { 
+      // balance calculations for all Right legs
       calculateBalOneLeg(-legPosX[legNr] + GaitPosX[legNr],
                          legPosZ[legNr] + GaitPosZ[legNr],
                          (legPosY[legNr] - (short)pgm_read_word(&cInitPosY[legNr])) + GaitPosY[legNr], legNr);
     }
 
     for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
-    { // balance calculations for all Right legs
-      //              DoBackgroundProcess();
+    { 
+      // balance calculations for all Right legs
       calculateBalOneLeg(legPosX[legNr] + GaitPosX[legNr],
                          legPosZ[legNr] + GaitPosZ[legNr],
                          (legPosY[legNr] - (short)pgm_read_word(&cInitPosY[legNr])) + GaitPosY[legNr], legNr);
@@ -1289,7 +1282,6 @@ void doKinetic()
   // Do IK for all Right legs
   for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
   {
-    //            DoBackgroundProcess();
     doBodyFK(-legPosX[legNr] + Hex.BodyPosX + GaitPosX[legNr] - TotalTransX,
              legPosZ[legNr] + Hex.BodyPosZ + GaitPosZ[legNr] - TotalTransZ,
              legPosY[legNr] + Hex.BodyPosY + GaitPosY[legNr] - TotalTransY,
@@ -1302,7 +1294,6 @@ void doKinetic()
   // Do IK for all Left legs
   for (byte legNr = NUM_LEGS_PER_SIDE; legNr < NUM_OF_LEGS; ++legNr)
   {
-    //            DoBackgroundProcess();
     doBodyFK(legPosX[legNr] - Hex.BodyPosX + GaitPosX[legNr] - TotalTransX,
              legPosZ[legNr] + Hex.BodyPosZ + GaitPosZ[legNr] - TotalTransZ,
              legPosY[legNr] + Hex.BodyPosY + GaitPosY[legNr] - TotalTransY,
@@ -1367,8 +1358,8 @@ void setup()
 #ifdef DEBUG
   Serial.begin(9600);
 #endif
-
-  drvPwm_init();
+  Wire.begin(SDA_PIN, SCL_PIN);
+  servo_init();
   delay(10);
 
 #ifdef BLUETOOTH_ENABLED
@@ -1412,14 +1403,7 @@ void setup()
   //   delay(10);
   // #endif // FOOT_SENSOR_ENABLED
 
-  pinMode(LED_RED_GPIO, OUTPUT);
-  for (byte i = 5; i > 0; --i)
-  {
-    digitalWrite(LED_RED_GPIO, HIGH); // turn the LED on (HIGH is the voltage level)
-    delay(100);                       // wait for a second
-    digitalWrite(LED_RED_GPIO, LOW);  // turn the LED off by making the voltage LOW
-    delay(100);                       // wait for a second
-  }
+  buzzer_toggle(3, 200, 100);
 }
 
 /**
@@ -1476,7 +1460,7 @@ void loop()
   limitAngles();
 
 #ifndef DEBUG_ON
-  if (Hex.bHexON
+  if (Hex.bHexON && battMan_isPowerOk()
       // || !Hex.bHexInit
   )
 #else

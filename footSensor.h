@@ -15,37 +15,42 @@
 void footSensor_init(void);
 
 /**
- * @brief get interrupt flag
+ * @brief check if any leg touches ground
  * 
- * @return true 
- * @return false 
+ * @return true if there is any leg touching ground 
+ * @return false otherwise
  */
-bool footSensor_getFlag(void);
-
-/**
- * @brief clear interrupt flag
- * 
- */
-void footSensor_clrFlag(void);
+bool footSensor_isAnyLegTriggered(void);
 
 /**
  * @brief check that all legs touch the ground
  * 
- * @return true 
- * @return false 
+ * @return true if all legs touch ground
+ * @return false otherwise
  */
-bool footSensor_groundAll(void);
+bool footSensor_isAllLegsTriggered(void);
 
 /**
- * @brief get the current working leg number
+ * @brief check if the leg touched ground
  * 
+ * @param legNr the leg needing to be checked 
+ * @return true if the leg touched ground
+ * @return false otherwise
  */
-void footSensor_getWorkingSensor(byte legNr);
+bool footSensor_isTriggered(byte legNr);
 
 /**
- * @brief check if foot sensor is activated, then stop the corresponding leg
+ * @brief get the number of grounded legs
  * 
+ * @return the number of grounded legs
  */
-void footSensor_checkWithStop();
+uint8_t footSensor_getSensorMask();
+
+/**
+ * @brief set the number of grounded legs
+ * 
+ * @param mask the number of grounded legs
+ */
+void footSensor_setSensorMask(uint8_t mask);
 
 #endif // FOOTSENSOR_H_

@@ -1,6 +1,6 @@
 #include <PID_v2.h>
 #include "pid.h"
-#include "mpu6050.h"
+#include "driver/mpu6050.h"
 #include "setup.h"
 
 struct pidParam

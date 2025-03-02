@@ -10,10 +10,6 @@
 
 #include "setup.h"
 
-#define LED_RED GPIO_PIN_1
-#define LED_GREEN GPIO_PIN_2
-#define LED_BLUE GPIO_PIN_3
-
 /****************************************************************
  * VARIABLE
  ****************************************************************/
@@ -45,6 +41,13 @@
 #define COXA 0
 #define FERMUR 1
 #define TIBIA 2
+
+#define CELL1 0
+#define CELL2 1
+#define BATT_VOLT_LOW 3.2
+#define BATT_VOLT_HIGH 4.2
+#define BATT_OFFSET_1 0.08
+#define BATT_OFFSET_2 0.01
 
 #define STRING_INPUT_SIZE 50
 

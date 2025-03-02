@@ -1,6 +1,6 @@
 #include <MPU6050_light.h>
 #include "Wire.h"
-#include "mpu6050.h"
+#include "driver/mpu6050.h"
 #include "setup.h"
 #include "HexCfg.h"
 
@@ -29,7 +29,7 @@ float mpu6050_getAngle(char Axis) {
 
 
 void mpu6050_init(bool isInit) {
-  Wire.begin(SDA_PIN,SCL_PIN);
+  //Wire.begin(SDA_PIN,SCL_PIN);
 
   byte status = mpu.begin();
 #ifdef DEBUG_MPU

@@ -4,6 +4,12 @@
 #include "setup.h"
 
 /**
+ * @brief Initialize for servo module
+ * 
+ */
+void servo_init(void);
+
+/**
  * @brief This function simplifies servo control
  *
  * @param legNr         Order number of a leg

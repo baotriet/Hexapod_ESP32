@@ -1,16 +1,21 @@
 #include "HexCfg.h"
-#include "drvPwm.h"
+#include "driver/drvPwm.h"
 
 static byte servoCh[NUM_OF_LEGS][NUM_SERVOS_PER_LEG] = {
     // c  f  t
     {0, 1, 2}, // RR
-    {7, 6, 5}, // RM
-    {8, 9, 10}, // RF
-    {13, 14, 15},  // LR
-    {10, 9, 8}, // LM
-    {7, 6, 5} // LF
+    {3, 4, 5}, // RM
+    {6, 7, 8}, // RF
+    {0, 1, 2}, // LR
+    {3, 4, 5}, // LM
+    {6, 7, 8}  // LF
     
 };
+
+void servo_init()
+{
+    drvPwm_init();
+}
 
 void servo_setAngle(byte legNr, byte joint, int ServoAngle)
 {
