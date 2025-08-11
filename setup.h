@@ -7,7 +7,7 @@
   #include "WProgram.h"
 #endif
 
-// #define DEBUG
+#define DEBUG
 // #define DEBUG_PID
 // #define DEBUG_LEG
 // #define DEBUG_ON
@@ -19,6 +19,7 @@
 // #define DEBUG_HTTP_DATA
 // #define DEBUG_CAMERA
 // #define DEBUG_WIFI
+// #define DEBUG_BATTERY
 
 // #define BLUETOOTH_ENABLED
 // #define MQTT_ENABLED

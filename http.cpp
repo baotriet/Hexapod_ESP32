@@ -39,11 +39,9 @@ static esp_err_t data_handler(httpd_req_t *req) {
 #endif  // DEBUG_HTTP_DATA
     return ESP_FAIL;
   }
-#ifdef DEBUG_HTTP_DATA
-  Serial.print(F("Values received: "));
-#endif  // DEBUG_HTTP_DATA
   for (int i = 0; i < 7; i++) {
-    String key = "value" + String(i);
+    char key[8];
+    snprintf(key, sizeof(key), "value%d", i);
     httpInputData[i] = doc[key];
 #ifdef DEBUG_HTTP_DATA
     Serial.print(httpInputData[i]);

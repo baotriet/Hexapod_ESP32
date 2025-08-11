@@ -3,19 +3,14 @@
 #include "driver/mpu6050.h"
 #include "setup.h"
 
-struct pidParam
-{
-  float Kp;
-  float Ki;
-  float Kd;
-};
-pidParam pidCoorX = {5.0, 0.0, 0.0};
-pidParam pidCoorY = {5.0, 0.0, 0.0};
-pidParam pidCoorZ = {5.0, 0.0, 0.0};
+struct pidParam { float Kp, Ki, Kd; };
+static const pidParam pidCoorX = {5.0, 0.0, 0.0};
+static const pidParam pidCoorY = {5.0, 0.0, 0.0};
+static const pidParam pidCoorZ = {5.0, 0.0, 0.0};
 
-PID_v2 pidX(pidCoorX.Kp, pidCoorX.Ki, pidCoorX.Kd, PID::Direct, PID::P_On::Error);
-PID_v2 pidY(pidCoorY.Kp, pidCoorY.Ki, pidCoorY.Kd, PID::Direct, PID::P_On::Error);
-PID_v2 pidZ(pidCoorZ.Kp, pidCoorZ.Ki, pidCoorZ.Kd, PID::Direct, PID::P_On::Error);
+static PID_v2 pidX(pidCoorX.Kp, pidCoorX.Ki, pidCoorX.Kd, PID::Direct, PID::P_On::Error);
+static PID_v2 pidY(pidCoorY.Kp, pidCoorY.Ki, pidCoorY.Kd, PID::Direct, PID::P_On::Error);
+static PID_v2 pidZ(pidCoorZ.Kp, pidCoorZ.Ki, pidCoorZ.Kd, PID::Direct, PID::P_On::Error);
 
 void pid_init()
 {
@@ -31,29 +26,20 @@ void pid_init()
 const float *pid_update(float *output, int size)
 {
   mpu6050_update();
-  float input[3];
-
-  input[0] = mpu6050_getAngle('X');
-  input[1] = mpu6050_getAngle('Y');
-  input[2] = mpu6050_getAngle('Z');
-  output[0] = pidX.Run(input[0]);
-  output[1] = pidZ.Run(input[1]);
-  output[2] = pidY.Run(input[2]);
+  float x = mpu6050_getAngle('X');
+  float y = mpu6050_getAngle('Y');
+  float z = mpu6050_getAngle('Z');
+  output[0] = pidX.Run(x);
+  output[1] = pidZ.Run(y);
+  output[2] = pidY.Run(z);
 #ifdef DEBUG_PID
-  Serial.print(F("angle"));
-  Serial.print(F("\t"));
-  Serial.print(input[0]);
-  Serial.print(F("\t"));
-  Serial.print(input[1]);
-  Serial.print(F("\t"));
-  Serial.print(input[2]);
-  Serial.print(F("\t"));
-  Serial.print(output[0]);
-  Serial.print(F("\t"));
-  Serial.print(output[1]);
-  Serial.print(F("\t"));
+  Serial.print(F("angle\t"));
+  Serial.print(x); Serial.print(F("\t"));
+  Serial.print(y); Serial.print(F("\t"));
+  Serial.print(z); Serial.print(F("\t"));
+  Serial.print(output[0]); Serial.print(F("\t"));
+  Serial.print(output[1]); Serial.print(F("\t"));
   Serial.println(output[2]);
-#endif // DEBUG_PID
-
+#endif
   return output;
 }

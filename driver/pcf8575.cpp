@@ -1,6 +1,8 @@
 #include <Adafruit_PCF8575.h>
 #include "HexCfg.h"
+#include "pcf8575.h"
 #include "setup.h"
+#include "Wire.h"
 
 Adafruit_PCF8575 pcf;
 
@@ -11,18 +13,20 @@ static bool irqFlag;
 
 void pcf8575_init()
 {
-    if (!pcf.begin(0x20, &Wire))
+    //Wire.begin(SDA_PIN, SCL_PIN);
+    if (!pcf.begin()) // 0x20
     {
+        Serial.println("Failed to initialize PCF8575.");
         while (1);
     }
     for (int i = 0; i < NUM_OF_LEGS; ++i)
     {
         pcf.pinMode(i, INPUT);
     }
-
+    pcf.digitalWrite(P10, HIGH);
     // set up the interrupt pin on IRQ signal toggle
-    pinMode(ARDUINO_IRQ, INPUT);
 #ifdef FOOT_SENSOR_INT_ENABLED
+    pinMode(ARDUINO_IRQ, INPUT);
     irqFlag = false;
     attachInterrupt(digitalPinToInterrupt(ARDUINO_IRQ), callback, CHANGE);
 #endif

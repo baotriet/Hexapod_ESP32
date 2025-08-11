@@ -28,7 +28,6 @@ void drvPwm_init()
 #ifdef DEBUG_PWM
   Serial.println(F("16 test"));
 #endif // DEBUG_PWM
-  //Wire.begin(SDA_PIN, SCL_PIN);
   // /* Wake the device up */
   pwmRight.begin();
   pwmLeft.begin();

@@ -46,12 +46,7 @@ bool footSensor_isAllLegsTriggered(void)
 
 bool footSensor_isTriggered(byte legNr)
 {
-  bool retval = false;
-  if(sensorMask & (1 << legNr))
-  {
-    retval = true;
-  }
-  return retval;
+  return (sensorMask & (1 << legNr)) != 0;
 }
 
 uint8_t footSensor_getSensorMask()

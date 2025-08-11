@@ -1,4 +1,3 @@
-
 #include <math.h>
 #include "helperFunc.h"
 #include "HexCfg.h"
@@ -163,28 +162,29 @@ long *helperFunc_getATan2(short AtanX, short AtanY)
     return atan4;
 }
 
+/**
+ * @brief helperFunc_smoothUpdate -  This function makes the hex move much smoother
+ *
+ * @param currentVal    current value
+ * @param targetVal     target value
+ * @param baseDiv       divider to smooth the value
+ * @param threshold     minimum gap between currentVal and targetVal
+ * @return updated value
+ */
 short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv, byte threshold)
 {
-    short difference = targetVal - currentVal;
-    
-    if (abs(difference) > threshold)
+    short diff = targetVal - currentVal;
+    short result = targetVal;
+    if (abs(diff) > threshold) 
     {
-        // Dynamic divisor calculation for smoother transition
-        // Larger difference results in a smaller divisor (larger step)
-        // Smaller difference results in a larger divisor (smaller step)
-        byte div = baseDiv + abs(difference)/10; // Adjust the divisor formula as needed
-
+        byte div = baseDiv + (abs(diff) >> 4); // faster division
+        if (div == 0) div = 1;
         if (currentVal < targetVal)
-        {
-            return currentVal + abs(difference) / div;
-        }
-        else if (currentVal > targetVal)
-        {
-            return currentVal - abs(difference) / div;
-        }
+            result = currentVal + abs(diff) / div;
+        else
+            result = currentVal - abs(diff) / div;
     }
-
-    return targetVal;
+    return result;
 }
 
 void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry)

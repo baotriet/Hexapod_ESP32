@@ -27,16 +27,16 @@
 #define L_DRIVER 0x40
 #define R_DRIVER 0x41
 
-#define SDA_PIN 15
+#define SDA_PIN 13
 #define SCL_PIN 14
 
-#define RR 0
+#define RR 2
 #define RM 1
-#define RF 2
+#define RF 0
 
-#define LR 3
+#define LR 5
 #define LM 4
-#define LF 5
+#define LF 3
 
 #define COXA 0
 #define FERMUR 1
@@ -44,7 +44,7 @@
 
 #define CELL1 0
 #define CELL2 1
-#define BATT_VOLT_LOW 3.2
+#define BATT_VOLT_LOW 3.3
 #define BATT_VOLT_HIGH 4.2
 #define BATT_OFFSET_1 0.08
 #define BATT_OFFSET_2 0.01
@@ -232,12 +232,12 @@ enum {
   MODE_SINGLE_LEG
 };
 
-//                          RR RM RF LR LM LF
+//                          RF RM RR LF LM LR
 // Left: CW +   CCW -        Right: CW + CCW -
-const int CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
+const int CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -40, 0, 0, -40, 0}; //choose angle then reverse right
 // Left: Up -  Down +      Right: Up + Down -
-const int FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
+const int FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {0, -20, 0, 70, 30, 0}; //choose angle then reverse left
 // Left: Up +  Down -       Right: Up + Down -
-const int TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
+const int TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {0, 20, 20, 10, 50, 40}; //choose angle then reverse right
 
 #endif /* HEXCFG_H_ */

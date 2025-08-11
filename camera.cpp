@@ -1,4 +1,3 @@
-
 /*********
   Rui Santos
   Complete project details at https://RandomNerdTutorials.com/esp32-cam-video-streaming-web-server-camera-home-assistant/
@@ -33,18 +32,20 @@ static bool camera_doneInit = false;
 static esp_err_t camera_init();
 
 void crop_image(camera_fb_t *fb, unsigned short cropLeft, unsigned short cropRight, unsigned short cropTop, unsigned short cropBottom) {
-  unsigned int maxTopIndex = cropTop * fb->width * 2;
-  unsigned int minBottomIndex = ((fb->width * fb->height) - (cropBottom * fb->width)) * 2;
-  unsigned short maxX = fb->width - cropRight;  // In pixels
-  unsigned short newWidth = fb->width - cropLeft - cropRight;
-  unsigned short newHeight = fb->height - cropTop - cropBottom;
+  unsigned int width = fb->width;
+  unsigned int height = fb->height;
+  unsigned int maxTopIndex = cropTop * width * 2;
+  unsigned int minBottomIndex = ((width * height) - (cropBottom * width)) * 2;
+  unsigned short maxX = width - cropRight;
+  unsigned short newWidth = width - cropLeft - cropRight;
+  unsigned short newHeight = height - cropTop - cropBottom;
   size_t newJpgSize = newWidth * newHeight * 2;
 
   unsigned int writeIndex = 0;
   // Loop over all bytes
   for (int i = 0; i < fb->len; i += 2) {
     // Calculate current X, Y pixel position
-    int x = (i / 2) % fb->width;
+    int x = (i / 2) % width;
 
     // Crop from the top
     if (i < maxTopIndex) {
@@ -96,8 +97,8 @@ static esp_err_t camera_init() {
   config.pin_pclk = PCLK_GPIO_NUM;
   config.pin_vsync = VSYNC_GPIO_NUM;
   config.pin_href = HREF_GPIO_NUM;
-  config.pin_sccb_sda = SIOD_GPIO_NUM;
-  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;

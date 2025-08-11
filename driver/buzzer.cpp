@@ -1,8 +1,8 @@
+#include <Arduino.h>
 #include "buzzer.h"
 #include "pcf8575.h"
-#include <esp32-hal.h>
 
-#define BUZZER_PIN 10
+#define BUZZER_PIN 8 //P10
 
 void buzzer_on(void)
 {
