@@ -46,6 +46,12 @@ uint16_t pcf8575_getValue(uint8_t startOrder, uint8_t endOrder)
 }
 
 #ifdef FOOT_SENSOR_INT_ENABLED
+/**
+ * @brief Interrupt callback for PCF8575 IRQ pin.
+ *
+ * This minimal callback re-enables interrupts; some boards require this for
+ * I2C to continue working inside an ISR.
+ */
 static void callback()
 {
     interrupts(); // Arduino UNO seems to require that we turn on interrupts for I2C to work!

@@ -7,7 +7,8 @@
   #include "WProgram.h"
 #endif
 
-#define DEBUG
+// #define DEBUG
+// #define CALIBRATION_ENABLED
 // #define DEBUG_PID
 // #define DEBUG_LEG
 // #define DEBUG_ON

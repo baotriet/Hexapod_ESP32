@@ -4,25 +4,40 @@
 #include "camera.h"
 #include "http.h"
 #include "setup.h"
+#include <HTTPClient.h>
+#include "battMan.h"
 
 JsonDocument doc;
 
 static bool httpDataReady = false;
 static byte httpInputData[7];
 
-static esp_err_t data_handler(httpd_req_t *req) {
+/**
+ * @brief HTTP POST handler for the "/values" endpoint.
+ *
+ * Expects a JSON body containing keys value0..value6. Parsed bytes are stored
+ * into the internal httpInputData buffer and the httpDataReady flag is set.
+ *
+ * @param req Pointer to the incoming HTTP request
+ * @return ESP_OK on success, ESP_FAIL on parse/recv error
+ */
+static esp_err_t data_handler(httpd_req_t *req)
+{
   // Read the data from the request
   const size_t bufferSize = 1024;
   char buf[bufferSize];
   size_t recvLen = req->content_len;
 
-  if (recvLen > bufferSize) {
+  if (recvLen > bufferSize)
+  {
     recvLen = bufferSize;
   }
 
   int ret = httpd_req_recv(req, buf, recvLen);
-  if (ret <= 0) {
-    if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+  if (ret <= 0)
+  {
+    if (ret == HTTPD_SOCK_ERR_TIMEOUT)
+    {
       httpd_resp_send_408(req);
     }
     return ESP_FAIL;
@@ -32,24 +47,26 @@ static esp_err_t data_handler(httpd_req_t *req) {
 
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, buf);
-  if (error) {
+  if (error)
+  {
 #ifdef DEBUG_HTTP_DATA
     Serial.print(F("deserializeJson() failed: "));
     Serial.println(error.f_str());
-#endif  // DEBUG_HTTP_DATA
+#endif // DEBUG_HTTP_DATA
     return ESP_FAIL;
   }
-  for (int i = 0; i < 7; i++) {
+  for (int i = 0; i < 7; i++)
+  {
     char key[8];
     snprintf(key, sizeof(key), "value%d", i);
     httpInputData[i] = doc[key];
 #ifdef DEBUG_HTTP_DATA
     Serial.print(httpInputData[i]);
-#endif  // DEBUG_HTTP_DATA
+#endif // DEBUG_HTTP_DATA
   }
 #ifdef DEBUG_HTTP_DATA
   Serial.println();
-#endif  // DEBUG_HTTP_DATA
+#endif // DEBUG_HTTP_DATA
 
   httpDataReady = true;
   httpd_resp_send(req, "Commands received", HTTPD_RESP_USE_STRLEN);
@@ -57,7 +74,34 @@ static esp_err_t data_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
-void http_init() {
+/**
+ * @brief HTTP GET handler for the "/battInfo" endpoint.
+ *
+ * Reads the battery voltages via battMan_getVoltages and returns a small JSON
+ * payload { "cell1": <float>, "cell2": <float> }.
+ *
+ * @param req Pointer to the incoming HTTP request
+ * @return ESP_OK
+ */
+static esp_err_t batt_info_handler(httpd_req_t *req)
+{
+  float v1 = 0.0f, v2 = 0.0f;
+  battMan_getVoltages(&v1, &v2);
+
+  JsonDocument doc;
+  doc["cell1"] = v1;
+  doc["cell2"] = v2;
+
+  String out;
+  serializeJson(doc, out);
+
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_send(req, out.c_str(), HTTPD_RESP_USE_STRLEN);
+  return ESP_OK;
+}
+
+void http_init()
+{
   httpd_handle_t data_httpd = NULL;
   httpd_config_t data_config = HTTPD_DEFAULT_CONFIG();
   data_config.server_port = 80;
@@ -69,40 +113,51 @@ void http_init() {
   stream_config.ctrl_port = 30000;
 
   httpd_uri_t data_uri = {
-    .uri = "/values",
-    .method = HTTP_POST,
-    .handler = data_handler,
-    .user_ctx = NULL
-  };
+      .uri = "/values",
+      .method = HTTP_POST,
+      .handler = data_handler,
+      .user_ctx = NULL};
 
   httpd_uri_t stream_uri = {
-    .uri = "/stream",
-    .method = HTTP_GET,
-    .handler = camera_stream_handler,
-    .user_ctx = NULL
-  };
+      .uri = "/stream",
+      .method = HTTP_GET,
+      .handler = camera_stream_handler,
+      .user_ctx = NULL};
 
-  if (httpd_start(&data_httpd, &data_config) == ESP_OK) {
+  httpd_uri_t batt_uri = {
+      .uri = "/battInfo",
+      .method = HTTP_GET,
+      .handler = batt_info_handler,
+      .user_ctx = NULL};
+
+  if (httpd_start(&data_httpd, &data_config) == ESP_OK)
+  {
     httpd_register_uri_handler(data_httpd, &data_uri);
+    httpd_register_uri_handler(data_httpd, &batt_uri);
   }
 
-  if (httpd_start(&stream_httpd, &stream_config) == ESP_OK) {
+  if (httpd_start(&stream_httpd, &stream_config) == ESP_OK)
+  {
     httpd_register_uri_handler(stream_httpd, &stream_uri);
   }
 }
 
-byte *http_inputData() {
+byte *http_inputData()
+{
   return httpInputData;
 }
 
-bool http_dataReady() {
+bool http_dataReady()
+{
   return httpDataReady;
 }
 
-void http_setDataReady(bool dataStatus) {
+void http_setDataReady(bool dataStatus)
+{
   httpDataReady = dataStatus;
 }
 
-void http_resetInputData() {
+void http_resetInputData()
+{
   memset(httpInputData, 0, sizeof(httpInputData));
 }

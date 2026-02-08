@@ -35,6 +35,10 @@
 char legName[6][5] = {"RR", "RM", "RF", "LR", "LM", "LF"};
 #endif
 
+#ifdef CALIBRATION_ENABLED
+int servoOffsets[NUM_OF_LEGS][NUM_SERVOS_PER_LEG] = {0}; // Store offsets for each servo
+#endif
+
 word servoMoveTime;                // Time for servo updates
 word prevServoMoveTime;            // Previous time for the servo updates
 unsigned long controlLegTimeStart; // Start time of the calculation cycles
@@ -99,21 +103,13 @@ byte bExtraCycle; // Forcing some extra timed cycles for avoiding
 typedef enum
 {
   STATE_IDLE,
+  STATE_STOPPED,
   STATE_GET_CMD,
   STATE_PROCESS_CMD,
-  STATE_CONTROL_SINGLE_LEG,
-  STATE_CALCULATE_GAIT,
-  STATE_BALANCE,
-  STATE_DO_KINETIC,
-  STATE_CONTROL_ALL_LEGS,
+  STATE_CALCULATE,
+  STATE_MOVE_ALL_LEGS,
+  STATE_WAIT_SYNC,
 } hexState_t;
-
-typedef enum
-{
-  STATE_GROUND,
-  STATE_MOVING,
-  STATE_REACHED,
-} legState_t;
 
 byte bHexON;
 
@@ -220,9 +216,7 @@ byte bDoubleHeight;
 byte bAdjustLegPositions;
 byte GaitStep; // Global Input Gait step
 
-hexState_t currentState;
-legState_t legState[NUM_OF_LEGS];
-byte curLeg = 0;
+static hexState_t currentState;
 
 long offsetX[NUM_OF_LEGS]; // Distance X from center of the body to the coxa
 long offsetZ[NUM_OF_LEGS]; // Distance Z from center of the body to the coxa
@@ -244,8 +238,9 @@ const byte cTravelDeadZone = 5;
 //****************************************************************************
 
 /**
- * @brief Select how the robot move
+ * @brief Select the current gait mode based on input or configuration.
  *
+ * Updates internal gait parameters used by the gait controller.
  */
 void selectGait()
 {
@@ -358,9 +353,12 @@ void selectGait()
 }
 
 /**
- * @brief Calculate gait of the robot
+ * @brief Calculate gait for a single leg index.
  *
- * @param legNr  Leg number
+ * Computes target positions/angles for leg `legNr` based on gait phase
+ * and global movement parameters.
+ *
+ * @param legNr Index of the leg to calculate (0..NUM_OF_LEGS-1)
  */
 void calculateGait(byte legNr)
 {
@@ -429,8 +427,9 @@ void calculateGait(byte legNr)
 }
 
 /**
- * @brief Calculate gait sequence
+ * @brief Calculate the entire gait sequence for the robot.
  *
+ * Updates internal GaitPosX/Y/Z arrays for the next cycle.
  */
 void calculateGaitSeq(void)
 {
@@ -471,12 +470,12 @@ void calculateGaitSeq(void)
 }
 
 /**
- * @brief Calculate leg angle for one leg to balance the robot
+ * @brief Calculate balance adjustments for a single leg.
  *
- * @param PosX  position X
- * @param PosZ  position Z
- * @param PosY  position Y
- * @param legNr leg number
+ * @param PosX X offset used for balance calculations (mm)
+ * @param PosZ Z offset used for balance calculations (mm)
+ * @param PosY Y offset used for balance calculations (mm)
+ * @param legNr Leg index to calculate
  */
 void calculateBalOneLeg(long PosX, long PosZ, long PosY, byte legNr)
 {
@@ -505,8 +504,9 @@ void calculateBalOneLeg(long PosX, long PosZ, long PosY, byte legNr)
 }
 
 /**
- * @brief Balance the body of robot
+ * @brief Balance the robot's body by adjusting leg positions.
  *
+ * Runs body-level balance algorithm using sensor inputs and leg positions.
  */
 void balanceBody(void)
 {
@@ -532,8 +532,7 @@ void balanceBody(void)
 }
 
 /**
- * @brief Control one leg of the robot
- *
+ * @brief Control a single leg when operating in single-leg mode.
  */
 void controlSingleLeg(void)
 {
@@ -584,13 +583,13 @@ void controlSingleLeg(void)
 }
 
 /**
- * @brief Calculates necessary foot position (leg space) to acheive commanded body rotations, translations, and gait inputs
+ * @brief Perform forward kinematics for the body to compute foot targets.
  *
- * @param PosX  X position of the body
- * @param PosZ  Z position of the body
- * @param PosY  Y position of the body
- * @param RotationY Y rotaion degree of body
- * @param BodyIKLeg inverse kinetic of body
+ * @param PosX Body translation X
+ * @param PosZ Body translation Z
+ * @param PosY Body translation Y
+ * @param RotationY Body rotation around Y axis
+ * @param BodyIKLeg Leg index for focused IK or 255 for all
  */
 void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLeg)
 {
@@ -647,12 +646,12 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
 }
 
 /**
- * @brief Calculates the angles of the coxa, femur and tibia for the given position of the feet
+ * @brief Compute inverse kinematics for a single leg.
  *
- * @param IKFeetPosX  X postion of the leg
- * @param IKFeetPosY  Y postion of the leg
- * @param IKFeetPosZ  Z postion of the leg
- * @param legNr  leg number
+ * @param IKFeetPosX Target X position for the foot (relative to coxa)
+ * @param IKFeetPosY Target Y position for the foot
+ * @param IKFeetPosZ Target Z position for the foot
+ * @param legNr Leg index (0..NUM_OF_LEGS-1)
  */
 void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
 {
@@ -667,25 +666,29 @@ void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
   long Temp2;
   long T3;
 
+  byte coxaLen = (byte)pgm_read_byte(&cCoxaLength[legNr]);
+  byte femurLen = (byte)pgm_read_byte(&cFemurLength[legNr]);
+  byte tibiaLen = (byte)pgm_read_byte(&cTibiaLength[legNr]);
+
   atan4 = helperFunc_getATan2(IKFeetPosX, IKFeetPosZ);
   coxaAngle[legNr] = (((long)atan4[0] * 180) / 3141) + (short)pgm_read_word(&cCoxaAngle1[legNr]);
 
   IKFeetPosXZ = atan4[1] / c2DEC;
 
-  IKA14 = helperFunc_getATan2(IKFeetPosY, IKFeetPosXZ - (byte)pgm_read_byte(&cCoxaLength[legNr]));
+  IKA14 = helperFunc_getATan2(IKFeetPosY, IKFeetPosXZ - coxaLen);
 
   IKSW2 = atan4[1];
 
-  Temp1 = ((((long)(byte)pgm_read_byte(&cFemurLength[legNr]) * (byte)pgm_read_byte(&cFemurLength[legNr])) - ((long)(byte)pgm_read_byte(&cTibiaLength[legNr]) * (byte)pgm_read_byte(&cTibiaLength[legNr]))) * c4DEC + ((long)IKSW2 * IKSW2));
-  Temp2 = (long)(2 * (byte)pgm_read_byte(&cFemurLength[legNr])) * c2DEC * (unsigned long)IKSW2;
+  Temp1 = ((((long)femurLen * femurLen) - ((long)tibiaLen * tibiaLen)) * c4DEC + ((long)IKSW2 * IKSW2));
+  Temp2 = (long)(2 * femurLen) * c2DEC * (unsigned long)IKSW2;
   T3 = Temp1 / (Temp2 / c4DEC);
   IKA24 = helperFunc_getArcCos(T3);
   // IKFemurAngle
 
   femurAngle[legNr] = -(long)(IKA14[0] + IKA24) * 180 / 3141 + 900;
 
-  Temp1 = ((((long)(byte)pgm_read_byte(&cFemurLength[legNr]) * (byte)pgm_read_byte(&cFemurLength[legNr])) + ((long)(byte)pgm_read_byte(&cTibiaLength[legNr]) * (byte)pgm_read_byte(&cTibiaLength[legNr]))) * c4DEC - ((long)IKSW2 * IKSW2));
-  Temp2 = 2 * ((long)((byte)pgm_read_byte(&cFemurLength[legNr]))) * (long)((byte)pgm_read_byte(&cTibiaLength[legNr]));
+  Temp1 = ((((long)femurLen * femurLen) + ((long)tibiaLen * tibiaLen)) * c4DEC - ((long)IKSW2 * IKSW2));
+  Temp2 = 2 * ((long)(femurLen)) * (long)(tibiaLen);
   AngleRad4 = helperFunc_getArcCos(Temp1 / Temp2);
 
   tibiaAngle[legNr] = -(900 - (long)AngleRad4 * 180 / 3141);
@@ -703,13 +706,13 @@ void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
 }
 
 /**
- * @brief Checks the mechanical limits of the servos
- *
+ * @brief Clamp servo angles to the configured mechanical limits.
  */
 void limitAngles(void)
 {
   for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
+#ifndef CALIBRATION_ENABLED
     coxaAngle[legNr] = _min(_max(coxaAngle[legNr], (short)pgm_read_word(&cCoxaMin1[legNr])),
                             (short)pgm_read_word(&cCoxaMax1[legNr])) +
                        (short)pgm_read_word(&CoxaAngleOffset[legNr]);
@@ -719,12 +722,16 @@ void limitAngles(void)
     tibiaAngle[legNr] = _min(_max(tibiaAngle[legNr], (short)pgm_read_word(&cTibiaMin1[legNr])),
                              (short)pgm_read_word(&cTibiaMax1[legNr])) +
                         (short)pgm_read_word(&TibiaAngleOffset[legNr]);
+#else
+    coxaAngle[legNr] = servoOffsets[legNr][COXA];
+    femurAngle[legNr] = servoOffsets[legNr][FEMUR];
+    tibiaAngle[legNr] = servoOffsets[legNr][TIBIA];
+#endif
   }
 }
 
 /**
- * @brief Initializate parameters for the robot
- *
+ * @brief Initialize leg positions, offsets, and internal state.
  */
 void initialize()
 {
@@ -788,9 +795,9 @@ void initialize()
 #endif
 
 /**
- * @brief adjust the init leg positions to the width passed in.
+ * @brief Adjust the leg positions based on a supplied XZ length.
  *
- * @param XZLength1   Distance from the center to the tip of the leg
+ * @param XZLength1 Length parameter in internal units
  */
 void adjustLegPos(word XZLength1)
 {
@@ -810,14 +817,13 @@ void adjustLegPos(word XZLength1)
   ForceGaitStepCnt = StepsInGait;
 }
 
-byte g_iLegInitIndex = 0x00; // remember which index we are currently using...
 /**
- * @brief Adjust the position of the legs to be appropriate for the current y location of the body
- *
+ * @brief Adjust legs to match the current body height setting.
  */
 void adjustLegPosToBodyHeight(void)
 {
 #ifdef CNT_HEX_INITS
+  static byte lastIndex; // remember which index we are currently using...
   // Lets see which of our units we should use...
   // Note: We will also limit our body height here...
   if (bodyPosY > (short)pgm_read_byte(&g_abHexMaxBodyY[CNT_HEX_INITS - 1]))
@@ -833,14 +839,19 @@ void adjustLegPosToBodyHeight(void)
       break;
     }
   }
-  if (i != g_iLegInitIndex)
+  if (i != lastIndex)
   {
-    g_iLegInitIndex = i; // remember the current index...
+    lastIndex = i; // remember the current index...
     adjustLegPos(XZLength1);
   }
 #endif // CNT_HEX_INITS
 }
 
+/**
+ * @brief Compute and apply servo angles for the provided leg index.
+ *
+ * @param legNr Leg index to update
+ */
 void updateServoAngle(byte legNr)
 {
   coxaAngleTemp[legNr] = helperFunc_smoothBasedVal(coxaAngleTemp[legNr], coxaAngle[legNr], smoothBaseDiv, smoothThreshold);
@@ -849,33 +860,36 @@ void updateServoAngle(byte legNr)
 }
 
 /**
- * @brief Move servos to expected angle
+ * @brief Update and command all servos based on computed leg positions.
  *
+ * This is the main servo update routine called periodically by the control loop.
  */
-void controlLegs(byte legNr)
+void controlLegs()
 {
 #ifndef DEBUG_LEG
-  updateServoAngle(legNr);
-
-  // Cache values to local variables for efficiency
-  short coxa = coxaAngleTemp[legNr];
-  short femur = femurAngleTemp[legNr];
-  short tibia = tibiaAngleTemp[legNr];
-
-  if (legNr < NUM_LEGS_PER_SIDE)
+  for (byte legNr = 0; legNr < NUM_OF_LEGS; legNr++)
   {
-    // Right legs: invert coxa and tibia
-    servo_setAngle(legNr, COXA, -coxa);
-    servo_setAngle(legNr, FERMUR, femur);
-    servo_setAngle(legNr, TIBIA, -tibia);
-  }
-  else
-  {
-    // Left legs: invert femur only
-    servo_setAngle(legNr, COXA, coxa);
-    servo_setAngle(legNr, FERMUR, -femur);
-    servo_setAngle(legNr, TIBIA, tibia);
-  }
+    updateServoAngle(legNr);
+    // Cache values to local variables for efficiency
+    short coxa = coxaAngleTemp[legNr];
+    short femur = femurAngleTemp[legNr];
+    short tibia = tibiaAngleTemp[legNr];
+
+    if (legNr < NUM_LEGS_PER_SIDE)
+    {
+      // Right legs: invert coxa and tibia
+      servo_setAngle(legNr, COXA, -coxa);
+      servo_setAngle(legNr, FEMUR, -femur);
+      servo_setAngle(legNr, TIBIA, -tibia);
+    }
+    else
+    {
+      // Left legs: invert femur only
+      servo_setAngle(legNr, COXA, coxa);
+      servo_setAngle(legNr, FEMUR, femur);
+      servo_setAngle(legNr, TIBIA, tibia);
+    }
+
 #else  // DEBUG_LEG
   Serial.print(legName[legNr][5]);
   Serial.print(F("\t"));
@@ -903,12 +917,12 @@ void controlLegs(byte legNr)
     break;
   }
 #endif // DEBUG_LEG
+  }
 }
 
 /**
- * @brief Control hand grip
- *
- * @param angle
+ * @brief Control the grip mechanism to the given angle.
+ * @param angle Target grip servo angle
  */
 void controlGripHand(int angle)
 {
@@ -916,9 +930,9 @@ void controlGripHand(int angle)
 }
 
 /**
- * @brief Execute input command
+ * @brief Process an incoming command packet and act on it.
  *
- * @param cmd   input command string
+ * @param cmd Pointer to the 7-byte command buffer
  */
 void doCommand(byte *cmd)
 {
@@ -1004,10 +1018,13 @@ void doCommand(byte *cmd)
 
       if (BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE))
       {
-        if (g_BodyYOffset > 0)
-          g_BodyYOffset = 0;
-        else
-          g_BodyYOffset = 40;
+        static byte curCnt;
+        g_BodyYOffset = pgm_read_byte(&g_abHexIntXZ[curCnt]);
+        curCnt++;
+        if (curCnt >= CNT_HEX_INITS)
+        {
+          curCnt = 0;
+        }
         bAdjustLegPositions = true;
       }
 
@@ -1031,18 +1048,18 @@ void doCommand(byte *cmd)
 
       if (BUTTON_PRESSED(dwButton, INPUT_SPEED_UP))
       {
-        SpeedControl -= 50;
-        if (SpeedControl < 50)
-          SpeedControl = 50;
+        SpeedControl -= 10;
+        if (SpeedControl <= 0)
+          SpeedControl = 0;
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_SPEED_DOWN))
       {
-        SpeedControl += 50;
-        // if (SpeedControl > 200)
-        // {
-        //   SpeedControl = 200;
-        // }
+        SpeedControl += 10;
+        if (SpeedControl >= 100)
+        {
+          SpeedControl = 100;
+        }
       }
 
       if (BUTTON_PRESSED(dwButton, INPUT_GRIP_CLOSE))
@@ -1096,9 +1113,9 @@ void doCommand(byte *cmd)
         {
           bDoubleHeight = !bDoubleHeight;
           if (bDoubleHeight)
-            LegLiftHeight = 80;
+            LegLiftHeight = 90;
           else
-            LegLiftHeight = 50;
+            LegLiftHeight = 60;
         }
         // Double Travel Length
         if (BUTTON_PRESSED(dwButton, INPUT_OPT_R2))
@@ -1171,8 +1188,7 @@ void doCommand(byte *cmd)
 }
 
 /**
- * @brief Execute balance feature
- *
+ * @brief Perform the balance control loop step.
  */
 void doBalance()
 {
@@ -1198,8 +1214,7 @@ void doBalance()
 }
 
 /**
- * @brief Execuate kinetic caculation to get servo angles
- *
+ * @brief Perform kinetic calculations for gait dynamics.
  */
 void doKinetic()
 {
@@ -1273,20 +1288,101 @@ bool getCmd(byte *cmd)
   return ret;
 }
 
+#ifdef CALIBRATION_ENABLED
 /**
- * @brief Arduino setup function
+ * @brief Print configured servo offsets over Serial.
+ */
+void printAllServoOffsets()
+{
+  Serial.println("Current Servo Offsets:");
+  const char *labels[] = {"Coxa", "Femur", "Tibia"};
+  for (int i = 0; i < NUM_OF_SERVOS; i++)
+  {
+    int legIndex = i / 3;
+    int jointIndex = i % 3;
+    Serial.print("Leg ");
+    Serial.print(legIndex);
+    Serial.print(" (");
+    Serial.print(labels[jointIndex]);
+    Serial.print(") offset: ");
+    Serial.println(servoOffsets[legIndex][jointIndex]);
+  }
+}
+
+/**
+ * @brief Serial-based servo calibration helper (reads commands from Serial).
+ */
+void calibrationServo(void)
+{
+  if (Serial.available())
+  {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    if (command.equalsIgnoreCase("PRINT"))
+    {
+      printAllServoOffsets();
+    }
+    else
+    {
+      int separatorIndex = command.indexOf('|');
+      if (separatorIndex != -1)
+      {
+        int servoNum = command.substring(0, separatorIndex).toInt();
+        int offset = command.substring(separatorIndex + 1).toInt();
+        int legNr = servoNum / 3;
+        int joint = servoNum % 3;
+
+        if (servoNum >= 0 && servoNum < NUM_OF_SERVOS && offset >= -900 && offset <= 900)
+        {
+          servoOffsets[legNr][joint] = offset;
+        }
+        else
+        {
+          Serial.println("Invalid input! Use 'servoID|servoAngle' format, or 'PRINT' to display offsets.");
+        }
+      }
+      else
+      {
+        Serial.println("Invalid format! Use 'servoID|servoAngle' or 'PRINT'.");
+      }
+    }
+  }
+}
+#endif
+
+/**
+ * @brief Send battery information using the configured transport.
  *
+ * This function will send via MQTT, Bluetooth or HTTP depending on compile-time
+ * configuration flags (MQTT_ENABLED, BLUETOOTH_ENABLED, HTTP_ENABLED).
+ */
+void sendBattInfo(void)
+{
+#ifdef MQTT_ENABLED
+  const char *topic = "hex/voltages";
+  battMan_sendVoltages(BATT_TRANSPORT_MQTT, topic);
+#elif defined(BLUETOOTH_ENABLED)
+  battMan_sendVoltages(BATT_TRANSPORT_BLUETOOTH, NULL);
+#elif defined(HTTP_ENABLED)
+  battMan_sendVoltages(BATT_TRANSPORT_HTTP, NULL);
+#endif
+}
+
+/**
+ * @brief Arduino setup() function that initializes subsystems.
  */
 void setup()
 {
-#ifdef DEBUG
-  Serial.begin(9600);
+#if defined(DEBUG) || defined(CALIBRATION_ENABLED)
+  Serial.begin(115200);
 #endif
 #ifdef DEBUG
   Serial.println("START: setup");
 #endif
   Wire.begin(SDA_PIN, SCL_PIN);
 
+#ifndef CALIBRATION_ENABLED
 #ifdef BLUETOOTH_ENABLED
   bluetooth_init(false);
   delay(10);
@@ -1311,7 +1407,7 @@ void setup()
   pid_init();
   delay(10);
 #endif // MPU_ENABLED
-
+#endif // CALIBRATION_ENABLED
   servo_init();
   delay(10);
 
@@ -1320,11 +1416,12 @@ void setup()
 
   pcf8575_init();
   delay(10);
-  
+
   initialize();
-  // limitAngles();
-  // controlLegs();
-  // delay(200);
+  limitAngles();
+  for (int i = 500; i > 0; i--)
+    controlLegs();
+  delay(200);
   //  after motor init to calibrate the sensor
 
   currentState = STATE_IDLE;
@@ -1335,67 +1432,54 @@ void setup()
 }
 
 /**
- * @brief Arduino loop function
- *
+ * @brief Arduino main loop(), called repeatedly after setup().
  */
 void loop()
 {
+#ifndef CALIBRATION_ENABLED
   byte commandData[7];
-  bool cmdDataReady = false;
-  switch (currentState)
+  bool cmdDataReady = getCmd(commandData);
+
+  uint32_t lTimerWaitEnd;
+  lTimerStart = millis();
+
+  if (cmdDataReady)
   {
-  case STATE_IDLE:
-    if (battMan_isPowerOk())
-    {
-      currentState = STATE_GET_CMD;
-    }
-    break;
-  case STATE_GET_CMD:
-    cmdDataReady = getCmd(commandData);
-    if (cmdDataReady)
-    {
+    cmdDataReady = false;
 #ifdef MQTT_ENABLED
-      mqtt_setDataReady(false);
+    mqtt_setDataReady(false);
 #elif defined(HTTP_ENABLED)
-      http_setDataReady(false);
+    http_setDataReady(false);
 #endif
-      currentState = STATE_PROCESS_CMD;
-    }
-    break;
-  case STATE_PROCESS_CMD:
     doCommand(commandData);
-    if (SelectedLeg < NUM_OF_LEGS)
-    {
-      currentState = STATE_CONTROL_SINGLE_LEG;
-    }
-    else
-    {
-      currentState = STATE_CALCULATE_GAIT;
-    }
+  }
+  sendBattInfo();
+  controlSingleLeg();
 
-    break;
-  case STATE_CONTROL_SINGLE_LEG:
-    controlSingleLeg();
-    // fall-through
-  case STATE_CALCULATE_GAIT:
-    // Gait
-    calculateGaitSeq();
-    // fall-through
-  case STATE_BALANCE:
-    // Balance calculations
-    TotalTransX = 0; // reset values used for calculation of balance
-    TotalTransY = 0;
-    TotalTransZ = 0;
-    TotalXBal1 = 0;
-    TotalZBal1 = 0;
-    TotalYBal1 = 0;
+  // Gait
+  calculateGaitSeq();
 
-    doBalance();
-    // fall-through
-  case STATE_DO_KINETIC:
-    doKinetic();
-    // Check mechanical limits
-    limitAngles();
+  // Balance calculations
+  TotalTransX = 0; // reset values used for calculation of balance
+  TotalTransY = 0;
+  TotalTransZ = 0;
+  TotalXBal1 = 0;
+  TotalZBal1 = 0;
+  TotalYBal1 = 0;
+
+  doBalance();
+  doKinetic();
+
+  // Check mechanical limits
+  limitAngles();
+
+#ifndef DEBUG_ON
+  if (bHexON && battMan_isPowerOk())
+#else
+  if (1)
+#endif // DEBUG_ON
+  {
+    // Drive Servos
     // Calculate Servo Move time
     if ((abs(TravelLengthX) > cTravelDeadZone) || (abs(TravelLengthZ) > cTravelDeadZone) || (abs(TravelRotationY * 2) > cTravelDeadZone))
     {
@@ -1408,60 +1492,42 @@ void loop()
     { // Movement speed excl. Walking
       servoMoveTime = 50 + SpeedControl;
     }
-#ifndef DEBUG_ON
-    if (bHexON)
-#else
-    if (1)
-#endif // DEBUG_ON
+
+    controlLegs();
+    // See if we need to sync our processor with the servo driver while walking to ensure the prev is completed
+    // before sending the next one
+
+    // Finding any incident of GaitPos/Rot <>0:
+    for (byte legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
     {
-      currentState = STATE_CONTROL_ALL_LEGS;
-    }
-    else
-    {
-      currentState = STATE_IDLE;
-    }
-    break;
-  case STATE_CONTROL_ALL_LEGS:
-    switch (legState[curLeg])
-    {
-    case STATE_GROUND:
-      break;
-    case STATE_MOVING:
-      controlLegs(curLeg);
-      if (coxaAngle[curLeg] == coxaAngleTemp[curLeg] &&
-          femurAngle[curLeg] == femurAngleTemp[curLeg] &&
-          tibiaAngle[curLeg] == tibiaAngleTemp[curLeg])
-      {
-        legState[curLeg] = STATE_REACHED;
-      }
-      break;
-    case STATE_REACHED:
-      // Finding any incident of GaitPos/Rot <>0:
-      if ((GaitPosX[curLeg] > cGPlimit) || (GaitPosX[curLeg] < -cGPlimit) || (GaitPosZ[curLeg] > cGPlimit) ||
-          (GaitPosZ[curLeg] < -cGPlimit) || (GaitRotY[curLeg] > cGPlimit) || (GaitRotY[curLeg] < -cGPlimit))
+      if ((GaitPosX[legNr] > cGPlimit) || (GaitPosX[legNr] < -cGPlimit) || (GaitPosZ[legNr] > cGPlimit) || (GaitPosZ[legNr] < -cGPlimit) || (GaitRotY[legNr] > cGPlimit) || (GaitRotY[legNr] < -cGPlimit))
       {
 
         bExtraCycle = NrLiftedPos + 1; // For making sure that we are using timed move until all legs are down
         break;
       }
-      // This code below is used to reduce the speed of hexapod, it will be fast without these lines below
-      if (bExtraCycle > 0)
-      {
-        bExtraCycle--;
-        fWalking = !(bExtraCycle == 0);
-      }
-      else
-      {
-        legState[curLeg] = STATE_GROUND;
-      }
-      break;
-    default:
-      break;
     }
-    curLeg = (curLeg + 1) % NUM_OF_LEGS;
-    currentState = STATE_IDLE;
-    break;
-  default:
-    break;
+
+    // This code below is used to reduce the speed of hexapod, it will be fast without these lines below
+    if (bExtraCycle > 0)
+    {
+      bExtraCycle--;
+      fWalking = !(bExtraCycle == 0);
+
+      // Get endtime and calculate wait time
+      lTimerWaitEnd = lTimerStart + prevServoMoveTime;
+
+      do
+      {
+        controlLegs();
+        // Wait the appropriate time, call any background process while waiting...
+      } while (millis() < lTimerWaitEnd);
+    }
   }
+  prevServoMoveTime = servoMoveTime;
+#else
+  calibrationServo();
+  limitAngles();
+  controlLegs();
+#endif // CALIBRATION_ENABLED
 }

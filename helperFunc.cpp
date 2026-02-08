@@ -162,15 +162,6 @@ long *helperFunc_getATan2(short AtanX, short AtanY)
     return atan4;
 }
 
-/**
- * @brief helperFunc_smoothUpdate -  This function makes the hex move much smoother
- *
- * @param currentVal    current value
- * @param targetVal     target value
- * @param baseDiv       divider to smooth the value
- * @param threshold     minimum gap between currentVal and targetVal
- * @return updated value
- */
 short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv, byte threshold)
 {
     short diff = targetVal - currentVal;

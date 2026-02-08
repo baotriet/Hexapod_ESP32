@@ -78,6 +78,14 @@ void crop_image(camera_fb_t *fb, unsigned short cropLeft, unsigned short cropRig
   fb->len = newJpgSize;
 }
 
+/**
+ * @brief Initialize the ESP32 camera peripheral and configure frame settings.
+ *
+ * This function configures pins, frame size, JPEG quality, and initializes
+ * the camera driver. It returns the esp_err_t code from esp_camera_init.
+ *
+ * @return ESP_OK on success or an esp_err_t error code on failure
+ */
 static esp_err_t camera_init() {
 #ifdef DEBUG_CAMERA
   Serial.setDebugOutput(false);
@@ -102,32 +110,37 @@ static esp_err_t camera_init() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_QQVGA;
+  config.frame_size = FRAMESIZE_VGA;
   config.pixel_format = PIXFORMAT_JPEG;  // for streaming
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
-  config.fb_location = CAMERA_FB_IN_DRAM;
+  // config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  // config.fb_location = CAMERA_FB_IN_PSRAM;
+  // config.jpeg_quality = 12;
+  // config.fb_count = 1;
+  // config.fb_location = CAMERA_FB_IN_DRAM;
 
 
   // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
   //                      for larger pre-allocated frame buffer.
-  // if (config.pixel_format == PIXFORMAT_JPEG)
-  // {
-  //     if (psramFound())
-  //     {
-  //         config.jpeg_quality = 10;
-  //         config.fb_count = 1;
-  //         config.grab_mode = CAMERA_GRAB_LATEST;
-  //     }
-  //     else
-  //     {
-  //         // Limit the frame size when PSRAM is not available
-  //         config.frame_size = FRAMESIZE_HQVGA;
-  //         config.fb_location = CAMERA_FB_IN_DRAM;
-  //     }
-  // }
+  if (config.pixel_format == PIXFORMAT_JPEG)
+  {
+    if (psramFound())
+    {
+      config.frame_size = FRAMESIZE_VGA;
+      config.fb_location = CAMERA_FB_IN_PSRAM;
+      config.grab_mode = CAMERA_GRAB_LATEST;
+      config.jpeg_quality = 10;
+      config.fb_count = 2;
+    }
+    else
+    {
+      // Limit the frame size when PSRAM is not available
+      config.frame_size = FRAMESIZE_HQVGA;
+      config.fb_location = CAMERA_FB_IN_DRAM;
+      config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+      config.jpeg_quality = 12;
+      config.fb_count = 1;
+    }
+  }
 
   // Camera init
   esp_err_t err = esp_camera_init(&config);
