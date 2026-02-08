@@ -8,6 +8,7 @@
 #endif
 
 // #define DEBUG
+// #define CALIBRATION_ENABLED
 // #define DEBUG_PID
 // #define DEBUG_LEG
 // #define DEBUG_ON
@@ -19,6 +20,7 @@
 // #define DEBUG_HTTP_DATA
 // #define DEBUG_CAMERA
 // #define DEBUG_WIFI
+// #define DEBUG_BATTERY
 
 // #define BLUETOOTH_ENABLED
 // #define MQTT_ENABLED
@@ -28,13 +30,10 @@
 // #define FOOT_SENSOR_ENABLED
 // #define FOOT_SENSOR_INT_ENABLED
 #define REVERSE_CMD_ENABLED
+// #define ROTATE_180_MPU6050
 
 #ifdef CAMERA_ENABLED
 #define CAMERA_MODEL_AI_THINKER
 #endif // CAMERA_ENABLED
-
-#define SDA_PIN 15
-#define SCL_PIN 14
-
 
 #endif // SETUP_H_

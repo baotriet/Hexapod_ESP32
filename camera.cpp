@@ -1,4 +1,3 @@
-
 /*********
   Rui Santos
   Complete project details at https://RandomNerdTutorials.com/esp32-cam-video-streaming-web-server-camera-home-assistant/
@@ -33,18 +32,20 @@ static bool camera_doneInit = false;
 static esp_err_t camera_init();
 
 void crop_image(camera_fb_t *fb, unsigned short cropLeft, unsigned short cropRight, unsigned short cropTop, unsigned short cropBottom) {
-  unsigned int maxTopIndex = cropTop * fb->width * 2;
-  unsigned int minBottomIndex = ((fb->width * fb->height) - (cropBottom * fb->width)) * 2;
-  unsigned short maxX = fb->width - cropRight;  // In pixels
-  unsigned short newWidth = fb->width - cropLeft - cropRight;
-  unsigned short newHeight = fb->height - cropTop - cropBottom;
+  unsigned int width = fb->width;
+  unsigned int height = fb->height;
+  unsigned int maxTopIndex = cropTop * width * 2;
+  unsigned int minBottomIndex = ((width * height) - (cropBottom * width)) * 2;
+  unsigned short maxX = width - cropRight;
+  unsigned short newWidth = width - cropLeft - cropRight;
+  unsigned short newHeight = height - cropTop - cropBottom;
   size_t newJpgSize = newWidth * newHeight * 2;
 
   unsigned int writeIndex = 0;
   // Loop over all bytes
   for (int i = 0; i < fb->len; i += 2) {
     // Calculate current X, Y pixel position
-    int x = (i / 2) % fb->width;
+    int x = (i / 2) % width;
 
     // Crop from the top
     if (i < maxTopIndex) {
@@ -77,6 +78,14 @@ void crop_image(camera_fb_t *fb, unsigned short cropLeft, unsigned short cropRig
   fb->len = newJpgSize;
 }
 
+/**
+ * @brief Initialize the ESP32 camera peripheral and configure frame settings.
+ *
+ * This function configures pins, frame size, JPEG quality, and initializes
+ * the camera driver. It returns the esp_err_t code from esp_camera_init.
+ *
+ * @return ESP_OK on success or an esp_err_t error code on failure
+ */
 static esp_err_t camera_init() {
 #ifdef DEBUG_CAMERA
   Serial.setDebugOutput(false);
@@ -101,32 +110,37 @@ static esp_err_t camera_init() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_QQVGA;
+  config.frame_size = FRAMESIZE_VGA;
   config.pixel_format = PIXFORMAT_JPEG;  // for streaming
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
-  config.fb_location = CAMERA_FB_IN_DRAM;
+  // config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  // config.fb_location = CAMERA_FB_IN_PSRAM;
+  // config.jpeg_quality = 12;
+  // config.fb_count = 1;
+  // config.fb_location = CAMERA_FB_IN_DRAM;
 
 
   // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
   //                      for larger pre-allocated frame buffer.
-  // if (config.pixel_format == PIXFORMAT_JPEG)
-  // {
-  //     if (psramFound())
-  //     {
-  //         config.jpeg_quality = 10;
-  //         config.fb_count = 1;
-  //         config.grab_mode = CAMERA_GRAB_LATEST;
-  //     }
-  //     else
-  //     {
-  //         // Limit the frame size when PSRAM is not available
-  //         config.frame_size = FRAMESIZE_HQVGA;
-  //         config.fb_location = CAMERA_FB_IN_DRAM;
-  //     }
-  // }
+  if (config.pixel_format == PIXFORMAT_JPEG)
+  {
+    if (psramFound())
+    {
+      config.frame_size = FRAMESIZE_VGA;
+      config.fb_location = CAMERA_FB_IN_PSRAM;
+      config.grab_mode = CAMERA_GRAB_LATEST;
+      config.jpeg_quality = 10;
+      config.fb_count = 2;
+    }
+    else
+    {
+      // Limit the frame size when PSRAM is not available
+      config.frame_size = FRAMESIZE_HQVGA;
+      config.fb_location = CAMERA_FB_IN_DRAM;
+      config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+      config.jpeg_quality = 12;
+      config.fb_count = 1;
+    }
+  }
 
   // Camera init
   esp_err_t err = esp_camera_init(&config);

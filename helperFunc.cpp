@@ -1,4 +1,3 @@
-
 #include <math.h>
 #include "helperFunc.h"
 #include "HexCfg.h"
@@ -41,6 +40,10 @@ static const word GetSin[] PROGMEM = {
     9335, 9366, 9396, 9426, 9455, 9483, 9510, 9537, 9563, 9588, 9612, 9636, 9659, 9681, 9702, 9723, 9743,
     9762, 9781, 9799, 9816, 9832, 9848, 9862, 9876, 9890, 9902, 9914, 9925, 9935, 9945, 9953, 9961, 9969,
     9975, 9981, 9986, 9990, 9993, 9996, 9998, 9999, 10000}; //
+
+static uint32_t smoothInterval;
+static uint32_t smoothElapseTime;
+static byte smoothTimeStep;
 
 short *helperFunc_getSinCos(short AngleDeg1)
 {
@@ -159,35 +162,25 @@ long *helperFunc_getATan2(short AtanX, short AtanY)
     return atan4;
 }
 
-short helperFunc_smoothControl(short currentVal, short targetVal, byte baseDiv, byte threshold)
+short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv, byte threshold)
 {
-    short difference = targetVal - currentVal;
-    byte div;
-
-    if (abs(difference) > threshold)
+    short diff = targetVal - currentVal;
+    short result = targetVal;
+    if (abs(diff) > threshold) 
     {
-        // Dynamic divisor calculation for smoother transition
-        // Larger difference results in a smaller divisor (larger step)
-        // Smaller difference results in a larger divisor (smaller step)
-        div = baseDiv + abs(difference) / 10; // Adjust the divisor formula as needed
-
+        byte div = baseDiv + (abs(diff) >> 4); // faster division
+        if (div == 0) div = 1;
         if (currentVal < targetVal)
-        {
-            return currentVal + abs(difference) / div;
-        }
-        else if (currentVal > targetVal)
-        {
-            return currentVal - abs(difference) / div;
-        }
+            result = currentVal + abs(diff) / div;
+        else
+            result = currentVal - abs(diff) / div;
     }
-
-    return targetVal;
+    return result;
 }
-
 
 void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry)
 {
-  *lx = *lx;
+  // *lx = *lx;
   *ly = 255 - *ly;
   *rx = 255 - *rx;
   *ry = 255 - *ry;

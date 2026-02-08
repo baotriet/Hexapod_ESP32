@@ -10,10 +10,6 @@
 
 #include "setup.h"
 
-#define LED_RED GPIO_PIN_1
-#define LED_GREEN GPIO_PIN_2
-#define LED_BLUE GPIO_PIN_3
-
 /****************************************************************
  * VARIABLE
  ****************************************************************/
@@ -25,56 +21,63 @@
 
 // PWM parameters
 #define PWM_FREQ 50
-#define MIN_PULSE 210
-#define MAX_PULSE 800
+#define MIN_PULSE 80
+#define MAX_PULSE 512
 
 #define L_DRIVER 0x41
 #define R_DRIVER 0x40
 
+#define L_Frequency 26450000
+#define R_Frequency 26240000
 
-#define RRearCoxaServo 0
-#define RRearFemurServo 1
-#define RRearTibiaServo 2
+#define SDA_PIN 13
+#define SCL_PIN 14
 
-#define RCenterCoxaServo 3
-#define RCenterFemurServo 4
-#define RCenterTibiaServo 5
-
-#define RFrontCoxaServo 6
-#define RFrontFemurServo 7
-#define RFrontTibiaServo 8
-
-#define LRearCoxaServo 9
-#define LRearFemurServo 10
-#define LRearTibiaServo 11
-
-#define LCenterCoxaServo 12
-#define LCenterFemurServo 13
-#define LCenterTibiaServo 14
-
-#define LFrontCoxaServo 15
-#define LFrontFemurServo 16
-#define LFrontTibiaServo 17
-
-#define RR 0
+#define RR 2
 #define RM 1
-#define RF 2
+#define RF 0
 
-#define LR 3
+#define LR 5
 #define LM 4
-#define LF 5
+#define LF 3
 
 #define COXA 0
-#define FERMUR 1
+#define FEMUR 1
 #define TIBIA 2
 
-#define NUMBER_OF_LEGS 6
+#define CELL1 0
+#define CELL2 1
+#define BATT_VOLT_LOW 3.30
+#define BATT_VOLT_HIGH 4.20
+#define BATT_OFFSET_1 0.08
+#define BATT_OFFSET_2 0.01
+// Stability debounce for battery voltage readings: sanity checks will only
+// run after readings stay within BATT_STABLE_DELTA for BATT_STABLE_COUNT samples.
+// Tune these for your sensor noise and sampling rate.
+#ifndef BATT_STABLE_DELTA
+#define BATT_STABLE_DELTA 0.02
+#endif
+#ifndef BATT_STABLE_COUNT
+#define BATT_STABLE_COUNT 3
+#endif
+
 #define STRING_INPUT_SIZE 50
+
+#define NUM_OF_LEGS 6
+#define NUM_LEGS_PER_SIDE 3
+#define NUM_SERVOS_PER_LEG 3
+#define NUM_OF_SERVOS 18
+#define NUM_SERVOS_PER_PCA 9
 
 #ifndef DEFAULT_GAIT_SPEED
 #define DEFAULT_GAIT_SPEED 60
 #define DEFAULT_SLOW_GAIT 70
 #endif
+
+#define SERVO_ANGLE_6V 60
+#define SERVO_TIME_6V 0.08
+#define SERVO_ANGLE_PER_SECOND  SERVO_ANGLE_6V/SERVO_TIME_6V
+#define SERVO_ANGLE_PER_MILISEC 1000/SERVO_ANGLE_PER_SECOND
 
 #define SmDiv 5     // 3 to 5
 #define cGPlimit 2  // GP=GaitPos testing different limits
@@ -87,10 +90,10 @@
 #define cLMCoxaAngle1 (0)     //Default Coxa setup angle, decimals = 1
 #define cLFCoxaAngle1 (600)   //Default Coxa setup angle, decimals = 1
 
-#define CHexInitXZ 65
+#define CHexInitXZ 40
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))    // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866))  // sin(60) = .866
-#define CHexInitY 50                                     //Typical standing height (body above ground) in [mm]
+#define CHexInitY 25                                     //Typical standing height (body above ground) in [mm]
 
 #define cRRInitPosX CHexInitXZCos60  //Start positions of the Right Rear leg
 #define cRRInitPosY CHexInitY
@@ -116,9 +119,9 @@
 #define cLFInitPosY CHexInitY
 #define cLFInitPosZ -CHexInitXZSin60
 
-#define cXXCoxaLength 28 
-#define cXXFemurLength 50
-#define cXXTibiaLength 80
+#define cXXCoxaLength 25 
+#define cXXFemurLength 35
+#define cXXTibiaLength 65
 
 #define cRRCoxaLength cXXCoxaLength  //Right Rear leg
 #define cRRFemurLength cXXFemurLength
@@ -144,9 +147,9 @@
 #define cLFFemurLength cXXFemurLength
 #define cLFTibiaLength cXXTibiaLength
 
-#define HALF_BODY_LENGHT 73
-#define HALF_BODY_MIDDLE_WIDTH 66
-#define HALF_BODY_FR_WIDTH 55
+#define HALF_BODY_LENGHT 70
+#define HALF_BODY_MIDDLE_WIDTH 75
+#define HALF_BODY_FR_WIDTH 35
 
 #define cRROffsetX -HALF_BODY_FR_WIDTH  //Distance X from center of the body to the Right Rear coxa
 #define cRROffsetZ HALF_BODY_LENGHT     //Distance Z from center of the body to the Right Rear coxa
@@ -166,12 +169,12 @@
 #define cLFOffsetX HALF_BODY_FR_WIDTH  //Distance X from center of the body to the Left Front coxa
 #define cLFOffsetZ -HALF_BODY_LENGHT   //Distance Z from center of the body to the Left Front coxa
 
-#define COXA_MinANG -800
-#define COXA_MaxANG 800
-#define FEMUR_MinANG -800
-#define FEMUR_MaxANG 800
-#define TIBIA_MinANG -600
-#define TIBIA_MaxANG 600
+#define COXA_MinANG -900
+#define COXA_MaxANG 900
+#define FEMUR_MinANG -900
+#define FEMUR_MaxANG 900
+#define TIBIA_MinANG -900
+#define TIBIA_MaxANG 900
 //--------------------------------------------------------------------
 //[MIN/MAX ANGLES]
 #define cRRCoxaMin1 COXA_MinANG  //Mechanical limits of the Right Rear Leg, decimals = 1
@@ -219,18 +222,18 @@
 #define DEFINE_HEX_GLOBALS
 
 // Lets try some multi leg positions depending on height settings.
-#if 1  // Start first without...
-#define CNT_HEX_INITS 3
-#define MAX_BODY_Y 115
+#if 1 // Start first without...
+#define CNT_HEX_INITS 4
+#define MAX_BODY_Y 85
 
 #ifdef DEFINE_HEX_GLOBALS
-const byte g_abHexIntXZ[] PROGMEM = { CHexInitXZ, 80, 65 };
-const byte g_abHexMaxBodyY[] PROGMEM = { CHexInitY, 70, MAX_BODY_Y };
+const byte g_abHexIntXZ[] PROGMEM = {CHexInitXZ, 45, 55, 25};
+const byte g_abHexMaxBodyY[] PROGMEM = {CHexInitY, 56, 65, MAX_BODY_Y};
 #else
 extern const byte g_abHexIntXZ[];
 extern const byte g_abHexMaxBodyY[];
 #endif
-#endif  // if 0
+#endif // if 0
 
 #define CONTROL_MODE 4
 #define GAIT_TYPE 6
@@ -241,12 +244,12 @@ enum {
   MODE_SINGLE_LEG
 };
 
-//                          RR RM RF LR LM LF
+//                          RF RM RR LF LM LR
 // Left: CW +   CCW -        Right: CW + CCW -
-const word CoxaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, 0, 0, 0, 0, 0}; //choose angle then reverse left
-// Left: Up -  Down +      Right: Up + Down -
-const word FemurAngleOffset[NUMBER_OF_LEGS] PROGMEM = {-100, 40, -20, 0, 70, -40}; //choose angle then reverse left
+const short CoxaAngleOffset[NUM_OF_LEGS] PROGMEM = {-50, -50, -50, 50, 0, -50};
+// Left: Up   Down      Right: Up  Down (L==R)
+const short FemurAngleOffset[NUM_OF_LEGS] PROGMEM = {-100, -50, -50, 0, 0, 0};
 // Left: Up +  Down -       Right: Up + Down -
-const word TibiaAngleOffset[NUMBER_OF_LEGS] PROGMEM = {0, -40, -40, 40, 40, -20}; //choose angle then reverse left
+const short TibiaAngleOffset[NUM_OF_LEGS] PROGMEM = {-50, 0, -80, 50, -50, 30};
 
 #endif /* HEXCFG_H_ */

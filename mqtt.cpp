@@ -139,3 +139,22 @@ void mqtt_setDataReady(bool dataStatus)
 {
   mqttDataReady = dataStatus;
 }
+
+bool mqtt_publishVoltages(const char* topic, float cell1, float cell2)
+{
+  if (!mqttClient.connected()) {
+    // try reconnect
+    mqtt_connect2mqtt();
+  }
+  char payload[64];
+  // simple JSON: {"cell1":3.72,"cell2":3.71}
+  snprintf(payload, sizeof(payload), "{\"cell1\":%.3f,\"cell2\":%.3f}", cell1, cell2);
+  bool ok = mqttClient.publish(topic, payload);
+#ifdef DEBUG_WIFI_MQTT
+  Serial.print(F("MQTT publish to "));
+  Serial.print(topic);
+  Serial.print(F(" payload: "));
+  Serial.println(payload);
+#endif
+  return ok;
+}

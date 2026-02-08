@@ -37,15 +37,15 @@ unsigned long helperFunc_isqrt32(unsigned long n);
 long *helperFunc_getATan2(short AtanX, short AtanY);
 
 /**
- * @brief helperFunc_smoothControl (From Zenta) -  This function makes the body rotation and translation much smoother
+ * @brief helperFunc_smoothUpdate -  This function makes the hex move much smoother
  *
  * @param currentVal    current value
  * @param targetVal     target value
  * @param baseDiv       divider to smooth the value
  * @param threshold     minimum gap between currentVal and targetVal
- * @return short
+ * @return updated value
  */
-short helperFunc_smoothControl(short currentVal, short targetVal, byte baseDiv, byte threshold);
+short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv, byte threshold);
 
 /**
  * @brief Reverse command direction from 2 joysticks left and right

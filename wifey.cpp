@@ -1,5 +1,5 @@
 #include <WiFi.h>
-#include "myWifi.h"
+#include "wifey.h"
 #include "setup.h"
 
 IPAddress local_IP(192, 168, 87, 200);

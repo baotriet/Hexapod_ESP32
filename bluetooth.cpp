@@ -40,3 +40,15 @@ bool bluetooth_prepareData(byte *inputData) {
   }
   return dataReady;
 }
+
+bool bluetooth_sendVoltages(float cell1, float cell2) {
+  if (!HexPort) return false;
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"cell1\":%.3f,\"cell2\":%.3f}", cell1, cell2);
+  size_t written = HexPort.print(buf);
+#ifdef DEBUG_BLUETOOTH
+  Serial.print(F("Bluetooth send: "));
+  Serial.println(buf);
+#endif
+  return (written > 0);
+}

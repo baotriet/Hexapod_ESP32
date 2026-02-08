@@ -1,72 +1,60 @@
-#include <Adafruit_PCF8575.h>
+#include "HexCfg.h"
 #include "footSensor.h"
+#include "servo.h"
 #include "setup.h"
+#include "driver/pcf8575.h"
 
-Adafruit_PCF8575 pcf;
-
-#define ARDUINO_IRQ 13 // make sure this pin is possible to make IRQ input
-
-bool irqFlag;
-int workingSensor;
-
-void callback(void);
+static uint8_t sensorMask;
 
 void footSensor_init(void)
 {
-  Wire.begin(SDA_PIN, SCL_PIN);
-  pcf.begin(0x20, &Wire);
-  for (int i = 0; i < 6; i++)
+  sensorMask = 0;
+}
+
+bool footSensor_isAnyLegTriggered(void)
+{
+  int retval = false;
+  for(int legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
-    pcf.pinMode(i, INPUT);
+    if(sensorMask & (1 << legNr))
+    {
+      retval = true;
+      break;
+    }
   }
-  irqFlag = false;
-
-  // set up the interrupt pin on IRQ signal toggle
-  pinMode(ARDUINO_IRQ, INPUT);
-#ifdef FOOT_SENSOR_INT_ENABLED
-  attachInterrupt(digitalPinToInterrupt(ARDUINO_IRQ), callback, CHANGE);
-#endif
+  return retval;
 }
 
-void callback()
+void footSensor_update()
 {
-  if (irqFlag)
-    return; // we are already handling an irq so don't collide!
-  irqFlag = true;
-  interrupts(); // Arduino UNO seems to require that we turn on interrupts for I2C to work!
-  if(pcf.digitalRead(workingSensor))
+  sensorMask = pcf8575_getValue(0, NUM_OF_LEGS-1);
+}
+
+bool footSensor_isAllLegsTriggered(void)
+{
+  int retval = false;
+  for(int legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
   {
-
+    if(!(sensorMask & (1 << legNr)))
+    {
+      retval = true;
+      break;
+    }
   }
+  return retval;
 }
 
-bool footSensor_getFlag(void)
+bool footSensor_isTriggered(byte legNr)
 {
-  return irqFlag;
+  return (sensorMask & (1 << legNr)) != 0;
 }
 
-void footSensor_clrFlag(void)
+uint8_t footSensor_getSensorMask()
 {
-  irqFlag = false;
+  return sensorMask;
 }
 
-bool footSensor_checkAllSensor(void)
+void footSensor_setSensorMask(uint8_t mask)
 {
-  byte allSensorState = (pcf.digitalReadWord() >> 0) & 0xFF;
-  // Serial.println(allSensorState);
-  if (allSensorState == B111111)
-  {
-    return true;
-  }
-  return false;
-}
-
-void footSensor_getWorkingSensor(byte legNr)
-{
-  workingSensor = legNr;
-}
-
-bool footSensor_checkSingleSensor(byte legNr)
-{
-
+  sensorMask = mask;
 }
