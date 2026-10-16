@@ -224,11 +224,19 @@
 // Lets try some multi leg positions depending on height settings.
 #if 1 // Start first without...
 #define CNT_HEX_INITS 4
+#define CREEP_BODY_Y_MM 45
+#define CREEP_LEG_LIFT_MM 15
+#define CREEP_TRAVEL_MM 16
+#define CREEP_STEP_MS 250
+#define DEFAULT_LEG_LIFT_MM 15
+#define HIGH_LEG_LIFT_MM (2 * DEFAULT_LEG_LIFT_MM)
 #define MAX_BODY_Y 85
+#define MAX_BODY_Y_OFFSET (MAX_BODY_Y - CHexInitY)
 
 #ifdef DEFINE_HEX_GLOBALS
-const byte g_abHexIntXZ[] PROGMEM = {CHexInitXZ, 45, 55, 25};
-const byte g_abHexMaxBodyY[] PROGMEM = {CHexInitY, 56, 65, MAX_BODY_Y};
+const byte g_abHexIntXZ[] PROGMEM = {45, 45, 55, 25};
+// Absolute coxa-relative foot Y at neutral body rotation; folded Y is separate.
+const byte g_abHexMaxBodyY[] PROGMEM = {CREEP_BODY_Y_MM, 56, 65, MAX_BODY_Y};
 #else
 extern const byte g_abHexIntXZ[];
 extern const byte g_abHexMaxBodyY[];

@@ -20,6 +20,12 @@
 #include "camera.h"
 #include "wifey.h"
 #include "footSensor.h"
+#include "footSensorTest.h"
+#include "footLanding.h"
+
+#if defined(FOOT_SENSOR_WALK_ENABLED) && !defined(FOOT_SENSOR_ENABLED)
+#error "Contact-aware walking requires FOOT_SENSOR_ENABLED"
+#endif
 #include "helperFunc.h"
 #include "servo.h"
 #include "battMan.h"
@@ -222,6 +228,14 @@ long offsetX[NUM_OF_LEGS]; // Distance X from center of the body to the coxa
 long offsetZ[NUM_OF_LEGS]; // Distance Z from center of the body to the coxa
 static short g_BodyYShift;
 static short g_BodyYOffset;
+bool creepActive;
+bool walkingFootTargets;
+float walkingBodyBalance[3];
+bool footWalkingEnabled;
+enum FootRecovery { RECOVERY_IDLE, RECOVERY_RETRACE, RECOVERY_REVERSE, RECOVERY_SETTLE, RECOVERY_WAIT_CENTER, RECOVERY_WAIT_INPUT, RECOVERY_HOLD };
+FootRecovery footRecovery;
+long recoveryTravelX, recoveryTravelZ, recoveryRotation;
+unsigned recoverySteps;
 
 //***************************************************
 
@@ -603,9 +617,14 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
   short CPR_X;    // Total X distance between the center of the body and the feet
   short CPR_Z;    // Total Z distance between the center of the body and the feet
   short CPR_Y;    // Total Y distance between the center of the body and the feet
-  float bodyBalance[3];
+  float bodyBalance[3] = {0.0f, 0.0f, 0.0f};
   float tempBodyBalance[3];
-  pid_update(tempBodyBalance, 3);
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (walkingFootTargets)
+    memcpy(tempBodyBalance, walkingBodyBalance, sizeof(tempBodyBalance));
+  else
+#endif
+    pid_update(tempBodyBalance, 3);
 #ifdef MPU_ENABLED
   if (bBodyBalanceMode)
   {
@@ -655,6 +674,21 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
  */
 void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
 {
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (walkingFootTargets)
+  {
+    float horizontal = hypotf(IKFeetPosX, IKFeetPosZ);
+    float distance = hypotf(horizontal - pgm_read_byte(&cCoxaLength[legNr]), IKFeetPosY);
+    int femur = pgm_read_byte(&cFemurLength[legNr]);
+    int tibia = pgm_read_byte(&cTibiaLength[legNr]);
+    if (IKFeetPosY <= 0 || horizontal < 1 || distance <= abs(femur - tibia) ||
+        distance >= femur + tibia)
+    {
+      footLanding_fail("unreachable walking target", legNr);
+      return;
+    }
+  }
+#endif
   unsigned long IKSW2; // Length between Shoulder and Wrist, decimals = 2
   long *IKA14;         // Angle of the line S>W with respect to the ground in radians, decimals = 4
   unsigned long IKA24; // Angle of the line S>W with respect to the femur in radians, decimals = 4
@@ -767,7 +801,7 @@ void initialize()
   bBalanceMode = false;
   bBodyBalanceMode = false;
   bCameraStart = false;
-  LegLiftHeight = 60;
+  LegLiftHeight = DEFAULT_LEG_LIFT_MM;
   ForceGaitStepCnt = 0; // added to try to adjust starting positions depending on height...
   GaitStep = 1;
   selectGait();
@@ -823,17 +857,17 @@ void adjustLegPos(word XZLength1)
 void adjustLegPosToBodyHeight(void)
 {
 #ifdef CNT_HEX_INITS
-  static byte lastIndex; // remember which index we are currently using...
+  static byte lastIndex = 255; // Apply the first requested stance even at index zero.
   // Lets see which of our units we should use...
   // Note: We will also limit our body height here...
-  if (bodyPosY > (short)pgm_read_byte(&g_abHexMaxBodyY[CNT_HEX_INITS - 1]))
-    bodyPosY = (short)pgm_read_byte(&g_abHexMaxBodyY[CNT_HEX_INITS - 1]);
+  if (bodyPosY > MAX_BODY_Y_OFFSET)
+    bodyPosY = MAX_BODY_Y_OFFSET;
 
   byte i;
   word XZLength1 = pgm_read_byte(&g_abHexIntXZ[CNT_HEX_INITS - 1]);
   for (i = 0; i < (CNT_HEX_INITS - 1); i++)
   { // Don't need to look at last entry as we already init to assume this one...
-    if (bodyPosY <= (short)pgm_read_byte(&g_abHexMaxBodyY[i]))
+    if (CHexInitY + bodyPosY <= (short)pgm_read_byte(&g_abHexMaxBodyY[i]))
     {
       XZLength1 = pgm_read_byte(&g_abHexIntXZ[i]);
       break;
@@ -854,6 +888,15 @@ void adjustLegPosToBodyHeight(void)
  */
 void updateServoAngle(byte legNr)
 {
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (walkingFootTargets && footLanding_direct(legNr))
+  {
+    coxaAngleTemp[legNr] = coxaAngle[legNr];
+    femurAngleTemp[legNr] = femurAngle[legNr];
+    tibiaAngleTemp[legNr] = tibiaAngle[legNr];
+    return;
+  }
+#endif
   coxaAngleTemp[legNr] = helperFunc_smoothBasedVal(coxaAngleTemp[legNr], coxaAngle[legNr], smoothBaseDiv, smoothThreshold);
   femurAngleTemp[legNr] = helperFunc_smoothBasedVal(femurAngleTemp[legNr], femurAngle[legNr], smoothBaseDiv, smoothThreshold);
   tibiaAngleTemp[legNr] = helperFunc_smoothBasedVal(tibiaAngleTemp[legNr], tibiaAngle[legNr], smoothBaseDiv, smoothThreshold);
@@ -866,9 +909,9 @@ void updateServoAngle(byte legNr)
  */
 void controlLegs()
 {
-#ifndef DEBUG_LEG
   for (byte legNr = 0; legNr < NUM_OF_LEGS; legNr++)
   {
+#ifndef DEBUG_LEG
     updateServoAngle(legNr);
     // Cache values to local variables for efficiency
     short coxa = coxaAngleTemp[legNr];
@@ -891,7 +934,7 @@ void controlLegs()
     }
 
 #else  // DEBUG_LEG
-  Serial.print(legName[legNr][5]);
+  Serial.print(legName[legNr]);
   Serial.print(F("\t"));
   switch (legNr)
   {
@@ -929,6 +972,65 @@ void controlGripHand(int angle)
   // servo_setAngle(R_DRIVER, 15, 18, angle);
 }
 
+bool gaitAtRest()
+{
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (footLanding_busy() || footLanding_fault())
+    return false;
+#endif
+  if (TravelLengthX || TravelLengthZ || TravelRotationY || fWalking || ForceGaitStepCnt)
+    return false;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    if (abs(GaitPosX[leg]) > cGPlimit || GaitPosY[leg] ||
+        abs(GaitPosZ[leg]) > cGPlimit || abs(GaitRotY[leg]) > cGPlimit)
+      return false;
+  return true;
+}
+
+void updateCreepProfile()
+{
+  static byte savedGait;
+  static short savedLift;
+  static bool savedBalance, savedBodyBalance;
+  bool requested = OperationMode == MODE_WALK &&
+                   CHexInitY + g_BodyYOffset == CREEP_BODY_Y_MM;
+  if (requested != creepActive)
+  {
+    if (requested)
+    {
+      savedGait = GaitType;
+      savedLift = LegLiftHeight;
+      savedBalance = bBalanceMode;
+      savedBodyBalance = bBodyBalanceMode;
+      GaitType = 0; // Tripod 8.
+      GaitStep = 1;
+      selectGait();
+      Serial.println(F("Creep enabled: 45 mm, tripod gait, no turning/body corrections."));
+    }
+    else
+    {
+      GaitType = savedGait;
+      LegLiftHeight = savedLift;
+      bBalanceMode = savedBalance;
+      bBodyBalanceMode = savedBodyBalance;
+      GaitStep = 1;
+      selectGait();
+      Serial.println(F("Creep disabled; normal gait/lift/balance settings restored."));
+    }
+    creepActive = requested;
+  }
+  if (creepActive)
+  {
+    LegLiftHeight = CREEP_LEG_LIFT_MM;
+    bBalanceMode = bBodyBalanceMode = false;
+    bodyPosX = bodyPosZ = 0;
+    BodyRotX = BodyRotY = BodyRotZ = 0;
+    bodyRotOffsetX = bodyRotOffsetY = bodyRotOffsetZ = 0;
+    g_BodyYShift = 0;
+    TravelRotationY = 0;
+  }
+}
+
 /**
  * @brief Process an incoming command packet and act on it.
  *
@@ -956,6 +1058,55 @@ void doCommand(byte *cmd)
     byte rx = (byte)cmd[5];
     byte ry = (byte)cmd[6];
 
+#ifdef FOOT_SENSOR_WALK_ENABLED
+    static bool previousSensorButton = false;
+    bool sensorButton = BUTTON_PRESSED(dwButton, INPUT_TIP_SENSOR);
+    bool sensorEdge = sensorButton && !previousSensorButton;
+    previousSensorButton = sensorButton;
+    bool centered = abs(int(lx) - 128) <= CONFIG_TRAVEL_DEAD_ZONE &&
+                    abs(int(ly) - 128) <= CONFIG_TRAVEL_DEAD_ZONE &&
+                    abs(int(rx) - 128) <= CONFIG_TRAVEL_DEAD_ZONE &&
+                    abs(int(ry) - 128) <= CONFIG_TRAVEL_DEAD_ZONE;
+    if (sensorEdge)
+    {
+      if (!centered || !gaitAtRest() ||
+          (footRecovery != RECOVERY_IDLE && footRecovery != RECOVERY_WAIT_INPUT))
+        Serial.println(F("Foot sensor toggle rejected: stop and settle first; recovery cannot be disabled."));
+      else if (!footWalkingEnabled && !footSensor_mappingValid())
+        Serial.println(F("Foot sensor toggle rejected: invalid mapping."));
+      else
+      {
+        footWalkingEnabled = !footWalkingEnabled;
+        footLanding_init();
+        footRecovery = RECOVERY_IDLE;
+        Serial.println(footWalkingEnabled ? F("Contact-aware walking enabled.") : F("Contact-aware walking disabled."));
+      }
+    }
+    if (footWalkingEnabled && footRecovery != RECOVERY_IDLE)
+    {
+      if (footRecovery == RECOVERY_WAIT_CENTER && centered)
+      {
+        footRecovery = RECOVERY_WAIT_INPUT;
+        Serial.println(F("Recovery complete. Fresh joystick movement required."));
+      }
+      else if (footRecovery == RECOVERY_WAIT_INPUT && !centered)
+        footRecovery = RECOVERY_IDLE;
+      else
+        return;
+    }
+    if (footWalkingEnabled && (footLanding_fault() || footLanding_busy()))
+    {
+      if (centered)
+        TravelLengthX = TravelLengthZ = TravelRotationY = 0;
+      return; // Do not alter body, gait, or mode beneath a pending landing.
+    }
+#endif
+    if (!gaitAtRest() &&
+        BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE | INPUT_BODY_UP | INPUT_BODY_DOWN))
+      Serial.println(F("Height change rejected: center sticks and wait for the gait to settle."));
+    if (creepActive && !gaitAtRest() && BUTTON_PRESSED(dwButton, INPUT_MODE_SELECT))
+      Serial.println(F("Mode change rejected: stop creeping and let the gait settle first."));
+
 #ifdef REVERSE_CMD_ENABLED
     helperFunc_reverseCmd(&lx, &ly, &rx, &ry);
 #endif
@@ -976,7 +1127,12 @@ void doCommand(byte *cmd)
     if (bHexON)
     {
       // Switch operation mode
-      if (BUTTON_PRESSED(dwButton, INPUT_MODE_SELECT))
+      if (BUTTON_PRESSED(dwButton, INPUT_MODE_SELECT) &&
+          ((!creepActive
+#ifdef FOOT_SENSOR_WALK_ENABLED
+            && !footLanding_engaged()
+#endif
+           ) || gaitAtRest()))
       {
         nMode += 1;
         if (nMode > CONTROL_MODE - 1)
@@ -999,12 +1155,12 @@ void doCommand(byte *cmd)
           break;
         }
       }
-      if (BUTTON_PRESSED(dwButton, INPUT_BODY_BALANCE))
+      if (BUTTON_PRESSED(dwButton, INPUT_BODY_BALANCE) && !creepActive)
       {
         bBodyBalanceMode = !bBodyBalanceMode;
       }
 
-      if (BUTTON_PRESSED(dwButton, INPUT_BALANCE_TOGGLE))
+      if (BUTTON_PRESSED(dwButton, INPUT_BALANCE_TOGGLE) && !creepActive)
       {
         if (!bBalanceMode)
         {
@@ -1016,10 +1172,10 @@ void doCommand(byte *cmd)
         }
       }
 
-      if (BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE))
+      if (BUTTON_PRESSED(dwButton, INPUT_BODY_HEIGHT_TOGGLE) && gaitAtRest())
       {
         static byte curCnt;
-        g_BodyYOffset = pgm_read_byte(&g_abHexIntXZ[curCnt]);
+        g_BodyYOffset = (short)pgm_read_byte(&g_abHexMaxBodyY[curCnt]) - CHexInitY;
         curCnt++;
         if (curCnt >= CNT_HEX_INITS)
         {
@@ -1028,15 +1184,15 @@ void doCommand(byte *cmd)
         bAdjustLegPositions = true;
       }
 
-      if (BUTTON_PRESSED(dwButton, INPUT_BODY_UP))
+      if (BUTTON_PRESSED(dwButton, INPUT_BODY_UP) && gaitAtRest())
       {
         g_BodyYOffset += 10;
-        if (g_BodyYOffset > MAX_BODY_Y)
-          g_BodyYOffset = MAX_BODY_Y;
+        if (g_BodyYOffset > MAX_BODY_Y_OFFSET)
+          g_BodyYOffset = MAX_BODY_Y_OFFSET;
         bAdjustLegPositions = true;
       }
 
-      if (BUTTON_PRESSED(dwButton, INPUT_BODY_DOWN) && g_BodyYOffset)
+      if (BUTTON_PRESSED(dwButton, INPUT_BODY_DOWN) && g_BodyYOffset && gaitAtRest())
       {
         g_BodyYOffset -= 10;
         if (g_BodyYOffset < 0)
@@ -1095,10 +1251,11 @@ void doCommand(byte *cmd)
         }
       }
 
+      updateCreepProfile();
       if (OperationMode == MODE_WALK)
       {
         // Switch gait
-        if (BUTTON_PRESSED(dwButton, INPUT_OPT_SEL))
+        if (BUTTON_PRESSED(dwButton, INPUT_OPT_SEL) && !creepActive)
         {
           if (abs(TravelLengthX) < CONFIG_TRAVEL_DEAD_ZONE && abs(TravelLengthZ) < CONFIG_TRAVEL_DEAD_ZONE && abs(TravelRotationY * 2) < CONFIG_TRAVEL_DEAD_ZONE)
           {
@@ -1109,16 +1266,16 @@ void doCommand(byte *cmd)
           selectGait();
         }
         // Double leg lift height
-        if (BUTTON_PRESSED(dwButton, INPUT_OPT_R1))
+        if (BUTTON_PRESSED(dwButton, INPUT_OPT_R1) && !creepActive)
         {
           bDoubleHeight = !bDoubleHeight;
           if (bDoubleHeight)
-            LegLiftHeight = 90;
+            LegLiftHeight = HIGH_LEG_LIFT_MM;
           else
-            LegLiftHeight = 60;
+            LegLiftHeight = DEFAULT_LEG_LIFT_MM;
         }
         // Double Travel Length
-        if (BUTTON_PRESSED(dwButton, INPUT_OPT_R2))
+        if (BUTTON_PRESSED(dwButton, INPUT_OPT_R2) && !creepActive)
         {
           bDblTravel = !bDblTravel;
         }
@@ -1132,6 +1289,12 @@ void doCommand(byte *cmd)
           TravelLengthZ = TravelLengthZ / 2;
         }
         TravelRotationY = -(rx - 128) / 4; // Right Stick Left/Right
+        if (creepActive)
+        {
+          TravelLengthX = _min(_max(-(int(lx) - 128) / 8, -CREEP_TRAVEL_MM), CREEP_TRAVEL_MM);
+          TravelLengthZ = _min(_max((int(ly) - 128) / 8, -CREEP_TRAVEL_MM), CREEP_TRAVEL_MM);
+          TravelRotationY = 0;
+        }
       }
 
       // Translate
@@ -1171,7 +1334,7 @@ void doCommand(byte *cmd)
       }
       InputTimeDelay = 128 - _max(_max(abs(lx - 128), abs(ly - 128)), abs(rx - 128));
     }
-    bodyPosY = _min(_max(g_BodyYOffset + g_BodyYShift, 0), MAX_BODY_Y);
+    bodyPosY = _min(_max(g_BodyYOffset + g_BodyYShift, 0), MAX_BODY_Y_OFFSET);
     if (bAdjustLegPositions)
     {
       adjustLegPosToBodyHeight();
@@ -1369,12 +1532,53 @@ void sendBattInfo(void)
 #endif
 }
 
+#ifdef FOOT_SENSOR_TEST_ENABLED
+bool footTestMove(byte leg, short y)
+{
+  short x = (short)pgm_read_word(&cInitPosX[leg]);
+  short z = (short)pgm_read_word(&cInitPosZ[leg]);
+  float horizontal = sqrtf(float(x) * x + float(z) * z);
+  float radial = horizontal - pgm_read_byte(&cCoxaLength[leg]);
+  float distance = sqrtf(radial * radial + float(y) * y);
+  int femur = pgm_read_byte(&cFemurLength[leg]);
+  int tibia = pgm_read_byte(&cTibiaLength[leg]);
+  if (horizontal < 1 || distance <= abs(femur - tibia) || distance >= femur + tibia)
+  {
+    Serial.println(F("Foot test: unreachable target; holding previous command."));
+    return false;
+  }
+  doLegIK(x, y, z, leg);
+  short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
+  const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
+  const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
+  const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
+  for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+  {
+    int angle = angles[joint];
+    int corrected = angle + (short)pgm_read_word(&offsets[joint][leg]);
+    if (angle < (short)pgm_read_word(&mins[joint][leg]) ||
+        angle > (short)pgm_read_word(&maxs[joint][leg]) ||
+        corrected < -900 || corrected > 900)
+    {
+      Serial.println(F("Foot test: joint limit exceeded; holding previous command."));
+      return false;
+    }
+    angles[joint] = corrected;
+  }
+  // Small Cartesian test steps bypass smoothing so contact cannot leave a queued descent.
+  for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+    servo_setAngle(leg, joint, leg < NUM_LEGS_PER_SIDE ? -angles[joint] : angles[joint]);
+  return true;
+}
+
+#endif
+
 /**
  * @brief Arduino setup() function that initializes subsystems.
  */
 void setup()
 {
-#if defined(DEBUG) || defined(CALIBRATION_ENABLED)
+#if defined(DEBUG) || defined(CALIBRATION_ENABLED) || defined(FOOT_SENSOR_ENABLED)
   Serial.begin(115200);
 #endif
 #ifdef DEBUG
@@ -1382,7 +1586,7 @@ void setup()
 #endif
   Wire.begin(SDA_PIN, SCL_PIN);
 
-#ifndef CALIBRATION_ENABLED
+#if !defined(CALIBRATION_ENABLED) && !defined(FOOT_SENSOR_TEST_ENABLED)
 #ifdef BLUETOOTH_ENABLED
   bluetooth_init(false);
   delay(10);
@@ -1411,13 +1615,24 @@ void setup()
   servo_init();
   delay(10);
 
+#ifndef FOOT_SENSOR_TEST_ENABLED
   ads1115_init();
   delay(10);
+#endif
 
   pcf8575_init();
   delay(10);
 
+#ifdef FOOT_SENSOR_ENABLED
+  footSensor_init();
+#endif
+  footLanding_init();
+  footWalkingEnabled = false;
+  footRecovery = RECOVERY_IDLE;
   initialize();
+#ifdef FOOT_SENSOR_TEST_ENABLED
+  footSensorTest_init(footTestMove);
+#else
   limitAngles();
   for (int i = 500; i > 0; i--)
     controlLegs();
@@ -1426,6 +1641,7 @@ void setup()
 
   currentState = STATE_IDLE;
   buzzer_toggle(3, 200, 100);
+#endif
 #ifdef DEBUG
   Serial.println("DONE: setup");
 #endif
@@ -1434,8 +1650,211 @@ void setup()
 /**
  * @brief Arduino main loop(), called repeatedly after setup().
  */
+#ifdef FOOT_SENSOR_WALK_ENABLED
+void contactWalking()
+{
+  static uint32_t lastStep = 0;
+  static uint32_t lastOutput = 0;
+  static uint32_t lastPowerCheck = 0;
+  static bool powerSampled = false;
+  static bool powerOk = false;
+  uint32_t now = millis();
+  if (!bHexON)
+    return;
+  if (!powerSampled || uint32_t(now - lastPowerCheck) >= 100)
+  {
+    powerSampled = true;
+    lastPowerCheck = now;
+    powerOk = battMan_isPowerOk();
+  }
+  footSensor_update();
+  if (!powerOk)
+  {
+    footLanding_fail("battery check failed", NUM_OF_LEGS);
+    return;
+  }
+  if (SelectedLeg < NUM_OF_LEGS)
+  {
+    footLanding_fail("deselect single leg before walking", SelectedLeg);
+    return;
+  }
+  if (footRecovery == RECOVERY_HOLD || footRecovery == RECOVERY_WAIT_CENTER ||
+      footRecovery == RECOVERY_WAIT_INPUT)
+    return;
+  if (footLanding_fault())
+  {
+    if (footRecovery == RECOVERY_IDLE && footLanding_timedOut() &&
+        (recoveryTravelX || recoveryTravelZ || recoveryRotation))
+    {
+      if (footLanding_beginRestore())
+        footRecovery = RECOVERY_RETRACE;
+      else if (footLanding_allSupported())
+      {
+        footLanding_retry();
+        footRecovery = RECOVERY_REVERSE;
+        recoverySteps = 0;
+      }
+      else
+      {
+        footRecovery = RECOVERY_HOLD;
+        Serial.println(F("Opposite travel blocked: support unavailable. HOLD; secure robot and restart."));
+      }
+    }
+    else if (footRecovery == RECOVERY_RETRACE && footLanding_allSupported())
+    {
+      footLanding_retry();
+      footRecovery = RECOVERY_REVERSE;
+      recoverySteps = 0;
+    }
+    else
+    {
+      footRecovery = RECOVERY_HOLD;
+      Serial.println(F("Recovery blocked by fault. HOLD; secure robot and restart."));
+    }
+    if (footLanding_fault())
+      return;
+  }
+  if (footRecovery == RECOVERY_REVERSE)
+  {
+    TravelLengthX = -recoveryTravelX;
+    TravelLengthZ = -recoveryTravelZ;
+    TravelRotationY = -recoveryRotation;
+  }
+  else if (footRecovery == RECOVERY_SETTLE)
+    TravelLengthX = TravelLengthZ = TravelRotationY = 0;
+  if (!footLanding_engaged() && CHexInitY + bodyPosY <= CHexInitY &&
+      abs(TravelLengthX) <= cTravelDeadZone && abs(TravelLengthZ) <= cTravelDeadZone &&
+      abs(TravelRotationY) <= cTravelDeadZone)
+    return; // Leave the intentional folded startup untouched until a standing height is chosen.
+  if (!footLanding_engaged() && !footSensor_isAllLegsTriggered())
+  {
+    // Standing can be positioned first; only require contact when movement is requested.
+    if (abs(TravelLengthX) > cTravelDeadZone || abs(TravelLengthZ) > cTravelDeadZone ||
+        abs(TravelRotationY) > cTravelDeadZone)
+    {
+      footLanding_fail("all six feet must contact before walking", NUM_OF_LEGS);
+      return;
+    }
+    ForceGaitStepCnt = 0;
+  }
+  bool stepping = abs(TravelLengthX) > cTravelDeadZone ||
+                  abs(TravelLengthZ) > cTravelDeadZone ||
+                  abs(TravelRotationY) > cTravelDeadZone || fWalking || ForceGaitStepCnt;
+  servoMoveTime = stepping ? NomGaitSpeed + InputTimeDelay * 2 + SpeedControl +
+                               (bBalanceMode ? BALANCE_DELAY : 0)
+                          : 50 + SpeedControl;
+  if (creepActive)
+    servoMoveTime = _max(servoMoveTime, CREEP_STEP_MS);
+
+  if (uint32_t(now - lastOutput) < 20)
+    return;
+  lastOutput = now;
+  // Advance landing coordinates only when an output frame will be issued.
+  footLanding_update();
+  if (footLanding_fault())
+    return;
+  if (footRecovery != RECOVERY_RETRACE && !footLanding_busy() && stepping &&
+      uint32_t(now - lastStep) >= servoMoveTime)
+  {
+    long previousY[NUM_OF_LEGS];
+    memcpy(previousY, GaitPosY, sizeof(previousY));
+    if (footRecovery == RECOVERY_IDLE &&
+        (TravelLengthX || TravelLengthZ || TravelRotationY))
+    {
+      recoveryTravelX = TravelLengthX;
+      recoveryTravelZ = TravelLengthZ;
+      recoveryRotation = TravelRotationY;
+    }
+    calculateGaitSeq();
+    footLanding_plan(previousY, GaitPosY, servoMoveTime);
+    if (footRecovery == RECOVERY_REVERSE && ++recoverySteps >= 3U * StepsInGait)
+    {
+      footRecovery = RECOVERY_SETTLE;
+      TravelLengthX = TravelLengthZ = TravelRotationY = 0;
+      Serial.println(F("Three reverse gait cycles requested; finishing pending contact and settling."));
+    }
+    lastStep = now;
+  }
+  if (footLanding_fault())
+    return;
+  long plannedY[NUM_OF_LEGS];
+  memcpy(plannedY, GaitPosY, sizeof(plannedY));
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    GaitPosY[leg] = footLanding_y(leg, plannedY[leg]);
+  if (footRecovery == RECOVERY_RETRACE)
+  {
+    footLanding_restoreTargets(GaitPosX, GaitPosY, GaitPosZ, GaitRotY);
+    if (footLanding_fault())
+    {
+      memcpy(GaitPosY, plannedY, sizeof(plannedY));
+      return;
+    }
+    if (footLanding_restored())
+    {
+      footRecovery = RECOVERY_REVERSE;
+      recoverySteps = 0;
+      // The restored Y coordinates now live in per-foot support offsets.
+      memset(plannedY, 0, sizeof(plannedY));
+    }
+  }
+  // Body corrections are frozen for a landing transaction.
+  if (!footLanding_busy() && footRecovery != RECOVERY_RETRACE &&
+      footRecovery != RECOVERY_REVERSE && footRecovery != RECOVERY_SETTLE)
+  {
+    TotalTransX = TotalTransY = TotalTransZ = 0;
+    TotalXBal1 = TotalYBal1 = TotalZBal1 = 0;
+    doBalance();
+    pid_update(walkingBodyBalance, 3);
+  }
+  walkingFootTargets = true;
+  doKinetic();
+  memcpy(GaitPosY, plannedY, sizeof(plannedY));
+  for (byte leg = 0; leg < NUM_OF_LEGS && !footLanding_fault(); ++leg)
+  {
+    short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
+    const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
+    const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
+    const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+      if (angles[joint] < (short)pgm_read_word(&mins[joint][leg]) ||
+          angles[joint] > (short)pgm_read_word(&maxs[joint][leg]) ||
+          angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) < -900 ||
+          angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) > 900)
+        footLanding_fail("walking joint limit", leg);
+  }
+  if (!footLanding_fault())
+  {
+    long effectiveY[NUM_OF_LEGS];
+    for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+      effectiveY[leg] = footLanding_y(leg, plannedY[leg]);
+    limitAngles();
+    controlLegs();
+    if (footRecovery != RECOVERY_RETRACE)
+      footLanding_record(GaitPosX, effectiveY, GaitPosZ, GaitRotY);
+  }
+  walkingFootTargets = false;
+  bool displaced = false;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    displaced |= abs(GaitPosX[leg]) > cGPlimit || GaitPosY[leg] != 0 ||
+                 abs(GaitPosZ[leg]) > cGPlimit || abs(GaitRotY[leg]) > cGPlimit;
+  fWalking = displaced || footLanding_busy();
+  if (footRecovery == RECOVERY_SETTLE && !fWalking)
+  {
+    footRecovery = RECOVERY_WAIT_CENTER;
+    Serial.println(F("Retreat stopped. Center all sticks, then send fresh movement input."));
+  }
+}
+#endif
+
 void loop()
 {
+#ifdef FOOT_SENSOR_ENABLED
+  footSensor_update();
+#endif
+#ifdef FOOT_SENSOR_TEST_ENABLED
+  footSensorTest_update();
+  return;
+#endif
 #ifndef CALIBRATION_ENABLED
   byte commandData[7];
   bool cmdDataReady = getCmd(commandData);
@@ -1454,6 +1873,15 @@ void loop()
     doCommand(commandData);
   }
   sendBattInfo();
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (footWalkingEnabled && (OperationMode == MODE_WALK || footLanding_fault()))
+  {
+    contactWalking();
+    return;
+  }
+  if (footLanding_engaged())
+    footLanding_init();
+#endif
   controlSingleLeg();
 
   // Gait
@@ -1492,6 +1920,8 @@ void loop()
     { // Movement speed excl. Walking
       servoMoveTime = 50 + SpeedControl;
     }
+    if (creepActive)
+      servoMoveTime = _max(servoMoveTime, CREEP_STEP_MS);
 
     controlLegs();
     // See if we need to sync our processor with the servo driver while walking to ensure the prev is completed
@@ -1519,6 +1949,9 @@ void loop()
 
       do
       {
+#ifdef FOOT_SENSOR_ENABLED
+        footSensor_update();
+#endif
         controlLegs();
         // Wait the appropriate time, call any background process while waiting...
       } while (millis() < lTimerWaitEnd);

@@ -1,52 +1,152 @@
 #include "HexCfg.h"
 #include "footSensor.h"
-#include "servo.h"
-#include "setup.h"
 #include "driver/pcf8575.h"
 
-static uint8_t sensorMask;
+static const int sensorPins[NUM_OF_LEGS] = {
+    FOOT_SENSOR_RF_PIN, FOOT_SENSOR_RM_PIN, FOOT_SENSOR_RR_PIN,
+    FOOT_SENSOR_LF_PIN, FOOT_SENSOR_LM_PIN, FOOT_SENSOR_LR_PIN};
+static const char *const sensorNames[NUM_OF_LEGS] = {"RF", "RM", "RR", "LF", "LM", "LR"};
+static_assert(RF == 0 && RM == 1 && RR == 2 && LF == 3 && LM == 4 && LR == 5,
+              "Update sensorPins for the configured leg order");
+static_assert(FOOT_SENSOR_SAMPLE_MS > 0 && FOOT_SENSOR_CONTACT_MS > 0 &&
+                  FOOT_SENSOR_RELEASE_MS > 0 && FOOT_SENSOR_REPORT_MS > 0,
+              "Sensor timing must be positive");
 
-void footSensor_init(void)
+static uint8_t rawMask;
+static uint8_t stablePins;
+static uint8_t candidatePins;
+static uint8_t sensorMask;
+static uint32_t candidateSince[NUM_OF_LEGS];
+static uint32_t lastSample;
+#ifdef DEBUG_FOOT_SENSOR
+static uint32_t lastReport;
+#endif
+static bool sampled;
+
+bool footSensor_mappingValid()
 {
-  sensorMask = 0;
+  uint8_t used = 0;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    int pin = sensorPins[leg];
+    if (pin < 0 || pin >= NUM_OF_LEGS || (used & (1U << pin)))
+      return false;
+    used |= 1U << pin;
+  }
+  return true;
 }
 
-bool footSensor_isAnyLegTriggered(void)
+void footSensor_init()
 {
-  int retval = false;
-  for(int legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
-  {
-    if(sensorMask & (1 << legNr))
-    {
-      retval = true;
-      break;
-    }
-  }
-  return retval;
+  rawMask = stablePins = candidatePins = sensorMask = 0;
+  sampled = false;
+  lastSample = millis();
+#ifdef DEBUG_FOOT_SENSOR
+  lastReport = lastSample;
+#endif
+  for (byte pin = 0; pin < NUM_OF_LEGS; ++pin)
+    candidateSince[pin] = lastSample;
+  Serial.println(footSensor_mappingValid()
+                     ? F("Foot sensors: mapping configured; verify each physical leg.")
+                     : F("Foot sensors: UNMAPPED. Configure footSensorCfg.h; raw bits P05..P00 are available."));
 }
 
 void footSensor_update()
 {
-  sensorMask = pcf8575_getValue(0, NUM_OF_LEGS-1);
+  uint32_t now = millis();
+  if (sampled && uint32_t(now - lastSample) < FOOT_SENSOR_SAMPLE_MS)
+    return;
+  lastSample = now;
+  bool first = !sampled;
+  sampled = true;
+  rawMask = pcf8575_getValue(0, NUM_OF_LEGS - 1);
+  for (byte pin = 0; pin < NUM_OF_LEGS; ++pin)
+  {
+    uint8_t bit = 1U << pin;
+    if (first || ((rawMask ^ candidatePins) & bit))
+    {
+      candidatePins = (candidatePins & ~bit) | (rawMask & bit);
+      candidateSince[pin] = now;
+    }
+    uint32_t debounce = (candidatePins & bit) ? FOOT_SENSOR_CONTACT_MS : FOOT_SENSOR_RELEASE_MS;
+    if (uint32_t(now - candidateSince[pin]) >= debounce)
+      stablePins = (stablePins & ~bit) | (candidatePins & bit);
+  }
+
+  uint8_t previousMask = sensorMask;
+  sensorMask = 0;
+  if (footSensor_mappingValid())
+    for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+      if (stablePins & (1U << sensorPins[leg]))
+        sensorMask |= 1U << leg;
+
+  uint8_t changed = previousMask ^ sensorMask;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    if (changed & (1U << leg))
+    {
+      Serial.print(sensorNames[leg]);
+      Serial.println((sensorMask & (1U << leg)) ? F(": CONTACT") : F(": RELEASED"));
+    }
+
+#ifdef DEBUG_FOOT_SENSOR
+  if (uint32_t(now - lastReport) >= FOOT_SENSOR_REPORT_MS)
+  {
+    lastReport = now;
+    footSensor_report();
+  }
+#endif
 }
 
-bool footSensor_isAllLegsTriggered(void)
+void footSensor_report()
 {
-  int retval = false;
-  for(int legNr = 0; legNr < NUM_OF_LEGS; ++legNr)
+  if (!footSensor_mappingValid())
   {
-    if(!(sensorMask & (1 << legNr)))
-    {
-      retval = true;
-      break;
-    }
+    Serial.print(F("Foot sensors UNMAPPED: raw(P05..P00)="));
+    Serial.print(rawMask, BIN);
+    Serial.print(F(" stable="));
+    Serial.print(stablePins, BIN);
+    Serial.println(F(""));
+    return;
   }
-  return retval;
+  Serial.print(F("Feet: "));
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    if (leg)
+      Serial.print(F(", "));
+    Serial.print(sensorNames[leg]);
+    Serial.print((sensorMask & (1U << leg)) ? F("=CONTACT") : F("=RELEASED"));
+  }
+  Serial.println(F(""));
+}
+
+bool footSensor_isAnyLegTriggered()
+{
+  return sensorMask != 0;
+}
+
+bool footSensor_isAllLegsTriggered()
+{
+  return sensorMask == ((1U << NUM_OF_LEGS) - 1);
 }
 
 bool footSensor_isTriggered(byte legNr)
 {
-  return (sensorMask & (1 << legNr)) != 0;
+  if (legNr >= NUM_OF_LEGS)
+  {
+    Serial.println(F("Foot sensor: invalid leg index."));
+    return false;
+  }
+  return (sensorMask & (1U << legNr)) != 0;
+}
+
+bool footSensor_isRawTriggered(byte legNr)
+{
+  if (legNr >= NUM_OF_LEGS || !footSensor_mappingValid())
+  {
+    Serial.println(F("Foot sensor: raw contact requested with invalid leg/mapping."));
+    return false;
+  }
+  return (rawMask & (1U << sensorPins[legNr])) != 0;
 }
 
 uint8_t footSensor_getSensorMask()
@@ -54,7 +154,20 @@ uint8_t footSensor_getSensorMask()
   return sensorMask;
 }
 
+bool footSensor_isReleasedStable(byte legNr)
+{
+  if (legNr >= NUM_OF_LEGS || !footSensor_mappingValid())
+  {
+    Serial.println(F("Foot sensor: release requested with invalid leg/mapping."));
+    return false;
+  }
+  int pin = sensorPins[legNr];
+  uint8_t bit = 1U << pin;
+  return sampled && !(rawMask & bit) && !(stablePins & bit) &&
+         uint32_t(millis() - candidateSince[pin]) >= FOOT_SENSOR_RELEASE_MS;
+}
+
 void footSensor_setSensorMask(uint8_t mask)
 {
-  sensorMask = mask;
+  sensorMask = mask & ((1U << NUM_OF_LEGS) - 1);
 }

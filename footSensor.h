@@ -7,12 +7,18 @@
 #define FOOTSENSOR_H_
 
 #include "setup.h"
+#include "footSensorCfg.h"
 
 /**
  * @brief init function
  * 
  */
 void footSensor_init(void);
+void footSensor_update(void);
+void footSensor_report(void);
+bool footSensor_mappingValid(void);
+bool footSensor_isRawTriggered(byte legNr);
+bool footSensor_isReleasedStable(byte legNr);
 
 /**
  * @brief check if any leg touches ground
@@ -40,16 +46,16 @@ bool footSensor_isAllLegsTriggered(void);
 bool footSensor_isTriggered(byte legNr);
 
 /**
- * @brief get the number of grounded legs
+ * @brief Get the debounced contact bitmask indexed by configured leg number.
  * 
- * @return the number of grounded legs
+ * @return Contact bitmask, not a count.
  */
 uint8_t footSensor_getSensorMask();
 
 /**
- * @brief set the number of grounded legs
+ * @brief Override the contact mask until the next hardware sample (diagnostics).
  * 
- * @param mask the number of grounded legs
+ * @param mask Contact bitmask.
  */
 void footSensor_setSensorMask(uint8_t mask);
 
