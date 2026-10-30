@@ -1,4 +1,4 @@
-#ifndef HTTP_H_   /* Include guard */
+#ifndef HTTP_H_ /* Include guard */
 #define HTTP_H_
 
 #include <ArduinoJson.h>
@@ -7,6 +7,8 @@
  * @brief Initialize the onboard HTTP servers (data and stream endpoints).
  */
 void http_init();
+bool http_takeInput(byte *command);
+void http_setVoltages(float cell1, float cell2);
 
 /**
  * @brief Get a pointer to the last received input data buffer (7 bytes).
@@ -41,6 +43,6 @@ void http_resetInputData();
  * @param payload JSON document to send (will be serialized).
  * @return true on HTTP 2xx, false otherwise
  */
-bool http_sendJson(const char* url, const JsonDocument& payload);
+bool http_sendJson(const char *url, const JsonDocument &payload);
 
 #endif // HTTP_H_

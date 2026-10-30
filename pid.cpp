@@ -3,7 +3,10 @@
 #include "driver/mpu6050.h"
 #include "setup.h"
 
-struct pidParam { float Kp, Ki, Kd; };
+struct pidParam
+{
+  float Kp, Ki, Kd;
+};
 static const pidParam pidCoorX = {1.2, 0.04, 0.02};
 static const pidParam pidCoorY = {1.2, 0.04, 0.02};
 static const pidParam pidCoorZ = {1.2, 0.04, 0.02};
@@ -34,11 +37,16 @@ const float *pid_update(float *output, int size)
   output[2] = pidY.Run(z);
 #ifdef DEBUG_PID
   Serial.print(F("angle\t"));
-  Serial.print(x); Serial.print(F("\t"));
-  Serial.print(y); Serial.print(F("\t"));
-  Serial.print(z); Serial.print(F("\t"));
-  Serial.print(output[0]); Serial.print(F("\t"));
-  Serial.print(output[1]); Serial.print(F("\t"));
+  Serial.print(x);
+  Serial.print(F("\t"));
+  Serial.print(y);
+  Serial.print(F("\t"));
+  Serial.print(z);
+  Serial.print(F("\t"));
+  Serial.print(output[0]);
+  Serial.print(F("\t"));
+  Serial.print(output[1]);
+  Serial.print(F("\t"));
   Serial.println(output[2]);
 #endif
   return output;

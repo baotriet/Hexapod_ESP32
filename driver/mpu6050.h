@@ -1,10 +1,10 @@
 /* Get tilt angles on X and Y, and rotation angle on Z
  * Angles are given in degrees
- * 
+ *
  * License: MIT
  */
 
-#ifndef MPU6050_H_   /* Include guard */
+#ifndef MPU6050_H_ /* Include guard */
 #define MPU6050_H_
 
 #include "stdbool.h"

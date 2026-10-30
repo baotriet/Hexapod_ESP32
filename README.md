@@ -1,5 +1,367 @@
 # Hexapod_1.0_Nano
 
+## Firmware layout
+
+- [Hex.h](Hex.h) is the small public interface: Arduino `setup()` and `loop()`
+  declarations only. It can be included without defining state or pulling in
+  hardware dependencies.
+- [Hexapod_1_0_ESP32_v0.ino](Hexapod_1_0_ESP32_v0.ino) includes that interface.
+- [Hex.cpp](Hex.cpp) owns runtime state, geometry tables, gait/kinematics,
+  controller dispatch, hardware initialization, and motion scheduling. PlatformIO
+  compiles this implementation once; do not include it from other files.
+- [HexCfg.h](HexCfg.h) holds geometry, servo limits, and motion constants;
+  [setup.h](setup.h) selects firmware features.
+- Hardware drivers, foot sensing/landing, HTTP transport, and the browser page
+  remain in their existing modules.
+
+This separation changes code organization only, not startup, walking, safety
+checks, or timing. Host tests and simulation extract the actual functions from
+[Hex.cpp](Hex.cpp).
+
+## Source formatting
+
+Per-leg geometry and limit tables in [Hex.cpp](Hex.cpp) use RF, RM, RR, LF, LM,
+LR order, matching the IDs in [HexCfg.h](HexCfg.h) and channel labels in
+[servo.cpp](servo.cpp). The front/rear entries were previously reversed.
+Aligning them changes the corner legs' commanded trajectories; it is not just
+a naming change. Servo channels and calibration offsets have not been swapped.
+The front/rear geometry values in [HexCfg.h](HexCfg.h) have subsequently been
+swapped on each side to retain the pre-reorder channel geometry: front-labelled
+legs use positive neutral/body Z and -60-degree coxa references; rear-labelled
+legs use negative neutral/body Z and +60-degree references. IDs and calibration
+remain in RF, RM, RR, LF, LM, LR order. This preserves the former numerical
+geometry convention rather than independently establishing physical leg names.
+Verify physical leg/channel and switch labels with the robot securely supported
+before using this geometry on hardware. Simulation can compare commands but
+cannot confirm the physical wiring or prove that this fixes a contact-aware HOLD.
+
+The project [clang-format configuration](../.clang-format) uses two-space indentation,
+Allman braces (opening braces on their own line), and explicit braces around
+every `if`/`else` and loop body. Use clang-format 15 or newer for `InsertBraces`
+support. Format C/C++ headers, source, and Arduino sketches using this configuration;
+review preprocessor-dependent control flow, where automatic brace insertion may
+be skipped. The embedded HTML/CSS/JavaScript retains its separate web formatting.
+
+## Wi-Fi browser controller
+
+Contact-aware walking interpolates horizontal foot coordinates and gait rotation
+with the actual vertical descent progress. It does not apply the next horizontal
+target while the foot is still at the preceding full-lift height. Raw-contact
+pauses therefore pause both components. The nominal gait remains separate from
+the output coordinates; pose retention and recovery history store the coordinates
+actually issued. Joint/calibrated-servo limits and unreachable walking targets
+pause or recover instead of HOLD (see below). Host regression tests exercise the real contact scheduler, FK, IK,
+and calibration for 56 mm height / 30 mm lift in both travel directions; these
+tests do not certify physical servo response or floor contact.
+
+### Editing the page
+
+[webPage.h](webPage.h) contains the complete page inside the `R"HTML(...)HTML"`
+C++ raw string:
+
+- `<style>`: colors, button sizes, grid spacing, and mobile layout.
+- HTML below `</style>`: labels, buttons, selectors, joysticks, and camera.
+- `<script>`: input handling, command delivery, and telemetry updates.
+  Timing constants are grouped at the top; `update()` sends commands and
+  `updateTelemetry()` displays the robot's actual state.
+
+Keep element IDs and `data-action` values unchanged unless you also update
+their JavaScript/firmware handlers. For toggle text, update both its visible
+label and `data-label`, since telemetry restores the latter. Keep the raw-string
+opening/closing delimiters intact. Rebuild/upload after changes on the robot;
+restart the local preview and refresh the browser for preview-only checks.
+With Camera on, video fills the clear panel between the joysticks without
+stretching its aspect ratio. Settings occupy a separate full-width row below
+the sticks and camera, never covering the image. Camera off closes the stream.
+
+The default build enables `HTTP_ENABLED` and `WEB_CONTROLLER_ENABLED` in
+[setup.h](setup.h). The ESP32 serves its own offline page: no app, CDN,
+or internet connection is required. Phone and desktop
+browsers use the same interface. Bluetooth Classic and MQTT implementations
+are archived under [../legacy](../legacy) and are not part of the active
+firmware or browser interface.
+On touch phones the page attempts a landscape lock. If browser policy rejects
+it, tap **Landscape** to request fullscreen and landscape orientation, or rotate
+manually. Browser/OS support and user permission are required; an ordinary HTTP
+page cannot guarantee rotation. Rotation never enables motion. Portrait remains
+usable with smaller sticks flanking the camera and all settings below.
+
+### First connection
+
+1. Support the robot securely before uploading/resetting. Existing folded
+   startup positioning is unchanged; opening the page does not enable motion.
+2. Open the USB Serial monitor at 115200 baud, newline/LF. Send one line:
+
+   ```text
+   NET {"ssid":"YOUR_ROUTER_SSID","password":"YOUR_ROUTER_PASSWORD"}
+   ```
+
+   SSID must be 1-32 bytes; password must be 8-63 bytes. Provision only while
+   robot control is disabled. Reset after the `Network saved` message.
+   Firmware does not echo credentials. Serial local echo defaults OFF in
+   [platformio.ini](../platformio.ini); keep it off while provisioning.
+3. Settings persist in ESP32 Preferences/NVS, not source code. Full flash
+   erasure removes them. Storage is not encrypted; protect physical access.
+   Router passwords shorter than eight characters/open networks are not supported.
+4. Join either the router network or the `Hexapod-Control` hotspot (using the
+   **stored hotspot password**). Router association is nonblocking; the
+   hotspot stays available if the router is absent. On the hotspot open
+   `http://192.168.4.1/`; on the router use the address printed on Serial.
+   If a phone reports no internet, choose to stay connected.
+5. Click **Control** to enable, select a standing height (start with supported
+   56 mm, or previously validated supported creep at 45 mm), and check actual
+   robot state before moving. Foot protection remains OFF until selected.
+
+No Wi-Fi credentials are compiled into this firmware. Before provisioning,
+there is no intentionally open hotspot or default password. The web server
+stays stopped until saved settings initialize Wi-Fi; an unconfigured first
+boot stays running to accept the Serial `NET` command. Reset after saving.
+The web server
+uses plain HTTP and has no individual-user authentication: anyone on either
+network can operate it after obtaining the controller lease. Use trusted
+private networks only; do not forward ports 80/81 to the internet. The control
+API rejects browser cross-origin JSON commands; this is not a substitute for
+network access control.
+
+### Changing router and hotspot settings
+
+These are separate networks: `NET` selects the router the robot joins, not
+the name the robot broadcasts. With Control disabled and the gait settled,
+send either command through USB Serial (115200 baud, LF):
+
+```text
+NET {"ssid":"YOUR_ROUTER_NAME","password":"YOUR_ROUTER_PASSWORD"}
+HOTSPOT {"ssid":"YOUR_ROBOT_NAME","password":"YOUR_ROBOT_PASSWORD"}
+```
+
+Each command changes only its own saved settings. Names must be 1-32 bytes
+and passwords 8-63 bytes. Reset after the save confirmation, then reconnect
+your phone to the new hotspot name/password. Its page stays at
+`http://192.168.4.1/`. You can configure only HOTSPOT if no router is needed.
+For compatibility, until HOTSPOT is configured, existing NET settings still
+provide `Hexapod-Control` with the router password. Once HOTSPOT is saved,
+changing NET no longer changes the hotspot password.
+
+### Controls and stopping
+
+Two independent touch/pointer sticks and WASD/arrow keys supply the existing
+four axes. Release, pointer cancellation, or key-up returns the affected input
+to neutral. Space requests STOP; changing tab or losing window focus requests
+disable. Hidden/closed pages stop heartbeats, so the firmware also detects
+loss without depending on a final browser message.
+Opening a native dropdown can blur a mobile browser without leaving the
+page: that case centers inputs but does not disable Control. Actual tab
+hiding and other focus loss still request disable.
+The single **Control** button toggles enable/disable: green means this page
+has requested control and the robot confirms it is armed; dark means not armed.
+Its label stays fixed. Disabling preserves controlled stopping and servo torque.
+Camera sits beside Control, with STOP on the same compact command row.
+
+The page exposes operation mode, all six gaits, standing-height presets,
+speed percentage (higher is faster), lift, double travel, balance/IMU balance,
+foot-protection toggle, single-leg selection/hold, and camera streaming.
+Speed sets the requested gait delay, not a guaranteed physical speed. Both walking
+schedulers accept speed changes while walking without requiring centered sticks
+or settled feet. Speed changes do not replace the current pose; contact-aware
+walking completes the current step with its original delay. Height, gait, and
+other geometry settings still require centered controls and a settled gait.
+Both walking
+schedulers finish the smoothed servo commands and allow a full 50 Hz PWM frame at
+the final target before advancing. Normal walking measures its delay after the
+first servo output, excluding calculation and battery-read time; contact-aware
+walking retains the current step's delay even if the speed slider changes.
+Thus 100% means the fastest rate allowed by these timing checks, not skipping
+unfinished targets. This checks commanded positions, not measured joint positions:
+loaded or underpowered servos may still lag. Validate speed changes with the body
+supported and monitor the servo supply.
+
+Walking uses [servoMotion.h](servoMotion.h) to interpolate all airborne joints
+from their last commanded angles on one elapsed-time cubic easing profile.
+Different joint distances finish together instead of converging over a
+loop-dependent number of smoothing updates. Acceleration and deceleration are
+gentler at segment boundaries; this is joint-space easing, not a continuous
+Cartesian trajectory with nonzero velocity through every gait boundary.
+The requested interval reserves one final PWM frame. Larger moves extend the
+profile so its peak commanded speed does not exceed the configured nominal
+`SERVO_ANGLE_6V / SERVO_TIME_6V` rating. With the configured 60 degrees / 0.08 seconds,
+a 90-degree move takes at least 180 ms plus the final PWM frame. This nominal
+6 V rating is not a measured loaded-servo limit.
+
+Both sensor-off walking and airborne segments of contact-aware walking use
+this profile. Landing, search, seating, and supporting-foot commands still
+bypass easing so contact can stop new descent commands immediately; changed
+targets cancel stale segments. Nonwalking body-height, single-leg, startup,
+and calibration updates retain the fixed-fraction smoother. The gait delay is
+captured per step in both schedulers, so a speed-slider change cannot truncate
+the current segment. Existing reach, calibrated joint, support, and HOLD
+checks remain in place. Physical speed and smoothness still require hardware
+validation.
+
+Changing height can request one gait cycle to reposition the feet for the new
+stance width. With centered controls, the legs then finish landing and stay
+still; the settling state does not request additional lift cycles. Releasing
+travel or pressing STOP likewise finishes recentering without restarting swings.
+
+The web **Foot sensor** button enables only with centered inputs, a settled
+gait, WALK mode, a standing height above the folded pose, no selected single
+leg, valid sensor mapping, and a usable support polygon from debounced CONTACT
+readings. Four or five well-distributed contacts can pass; contact count alone
+is not sufficient. Otherwise it
+stays dark and the status message asks you to check the sensors/settings.
+Recheck the named contacts and click again after correcting the issue;
+there is no delayed automatic activation. Green follows confirmed robot
+telemetry only. This preflight does not guarantee valid geometry or support
+through a later step. With centered inputs, clicking the green **Foot sensor**
+button can cancel sensor-related HOLD/recovery even when Control is disarmed.
+The browser clears held joystick/keyboard input and pending settings/STOP when
+requesting this exit, and sends a neutral, disarmed command. A simultaneous STOP
+does not block cancellation. Non-neutral requests from other clients are rejected
+with an explicit message; exit rejection details remain visible alongside HOLD.
+It retains torque and the last issued targets, disables Control, and clears
+stored travel. Re-enable **Control**, then send fresh movement to continue
+without contact checks. Battery/workspace/joint faults cannot be cleared this way.
+Binary settings use fixed-label toggle buttons, including double
+travel: green means enabled, the normal dark color means disabled. Button
+labels do not append ON/OFF; `aria-pressed` exposes the state to screen readers.
+Their highlighted/pressed state reflects robot telemetry, not an assumed
+successful command; incompatible or rejected changes remain OFF/ON as
+reported by the robot. Multi-choice settings retain selectors.
+**Height** and **Lift** choose what the shared **+5 mm** / **-5 mm** buttons
+change; choosing one sends nothing, and +/-5 does nothing until one is chosen.
+Height steps the body 5 mm (`bodyUp`/`bodyDown`, 25-85 mm, including folding).
+Lift steps leg lift 5 mm (`liftUp`/`liftDown`, `MIN_LEG_LIFT_MM` 25 to
+`MAX_LEG_LIFT_MM` 50); the Lift button shows the current lift from telemetry.
+Steps are relative so fast taps are not lost to stale telemetry. Lift changes
+are ignored while creeping. As with the original buttons, manual heights other
+than exactly 45 mm are not creep-restricted; avoid trying to walk in the folded
+pose or unvalidated low heights.
+The **Foot sensor** button controls contact-aware walking; grip controls are
+not shown. Controls sit below the camera, between the joysticks;
+buttons fit their labels, with reduced padding and a 32 px minimum height.
+Operation, Gait, Height, and Single leg share one row; Height, Lift, +5 mm and
+-5 mm share the next.
+Double travel and other toggle buttons share a compact horizontal row, wrapping on narrow screens.
+The **IMU active** label controls the existing IMU body-balance setting; it
+does not power the IMU hardware on or off.
+The speed slider displays its current percentage and sends `100 - percentage`
+as the existing firmware delay (0-100 ms). Zero percent selects the slowest
+setting, not stop; this is not measured physical velocity.
+A selected single leg must be deselected before contact-aware walking.
+Single-leg behavior itself is otherwise unchanged.
+
+Commands use serialized HTTP polling at a requested 50 ms interval, with at
+most one in-flight command and no accumulating movement queue. This reuses
+the existing ESP-IDF HTTP server instead of requiring WebSocket support.
+Settings are validated and handed to the main loop; HTTP `accepted` means
+queued, not mechanically completed. Actual settings and rejected-action
+messages appear in telemetry, polled every 200 ms. Center sticks and let the
+gait settle before changing settings. Creep restrictions still apply.
+
+Only one controller owns input at a time. Another client gets HTTP 409 while
+the 750 ms lease is active; merely viewing telemetry does not take ownership.
+Temporary mailbox-busy replies carry `code: "busy"` and are retried without
+immediately disabling Control or dropping a setting. Retries are bounded to
+less than 600 ms since the last accepted command; persistent backpressure,
+ownership conflicts, and network errors still disable control. The server's
+750 ms watchdog is unchanged; rejected busy requests do not renew its lease.
+The status notice above the controls shows rejected actions and HOLD reasons,
+so a blocked safety state is not presented as a frozen page.
+If commands cease for 750 ms, or Disable is requested, stored travel is
+zeroed and valid gait landing/settling finishes before control is disabled.
+There is no automatic resume: a new explicit Enable action with centered
+inputs is required. A late packet or a different owner's movement packet
+cannot re-arm the robot. In single-leg mode, stopping also selects hold for the
+selected leg only and zeros single-leg motion requests.
+
+Operation/gait/height/leg menus open inside the page instead of native OS
+dropdowns, so selecting a mode does not depend on popup focus behavior or
+interrupt the command heartbeat. Opening a menu centers the inputs without
+disarming. Actual window focus loss, hidden tabs, and connection loss still stop
+control and require explicit re-enabling.
+The Height menu displays the firmware-reported body-height target, including
+folded startup and intermediate Body +10/-10 mm settings, even when no preset
+matches. The four preset choices remain unchanged. This is a commanded height,
+not a physical measurement from a ground-distance sensor.
+
+For single-leg control, first choose **Operation: Single leg**, then select a
+leg. Selection alone does not automatically lift it. Left-stick X/Y set the
+leg's X/Z offsets; right-stick Y sets its vertical offset. All three are absolute
+position offsets from that leg's standing position when first moved, not
+velocities. Repeating a deflection cannot accumulate vertical movement. Each
+axis retains its last position when its stick returns to center.
+
+**Single-leg hold** is saved independently for each leg. The button shows the
+selected leg's confirmed state (green = ON, dark = OFF); with None selected it
+shows OFF, and a hold command requires a selected leg. For example, holding RF
+does not hold RM: selecting RM shows RM's own state and permits moving RM if OFF.
+Held legs retain their positions when selecting another leg, None, or another
+operation mode. A leg/mode change returns only displaced legs whose own Hold is
+OFF; other legs' holds remain unchanged. Turning a leg's Hold OFF alone does not
+return it; a subsequent leg/mode change is required.
+Returning uses the actual saved stance, not the folded startup coordinates.
+Retaining a displaced leg across a mode change is intentional; it does not
+guarantee that walking from that pose is stable. Support the robot when testing.
+
+STOP zeros travel without cutting servo power. If a foot fault or automatic
+recovery is active, STOP/disconnection freezes further targets instead of
+continuing the retreat. Enable alone cannot clear that HOLD. Secure the body;
+the Foot sensor button can cancel a sensor-related HOLD as described above.
+Battery/geometry HOLD requires correcting the fault and restarting.
+Fault-free gait stopping is controlled settling, not
+instantaneous mechanical braking. PWM/servo torque remains active, and
+previously queued/physical motion may continue. This is **not a hardware
+emergency stop** or a safety-rated link; synchronous firmware/library calls
+can delay servicing beyond the nominal timeout. Keep a physical power
+disconnect available and test link loss with the body supported first.
+
+Named foot contacts, landing/recovery state, last fault, battery cells,
+network addresses, and actual settings are shown. Battery sampling runs on
+the main thread; HTTP responses use a cached snapshot rather than accessing
+I2C from the server task. Camera is optional MJPEG on port 81; Start camera
+opens it, Stop camera closes the image request (not camera power). Test link
+responsiveness while streaming before loaded operation.
+With PSRAM, streaming uses QVGA **320x240**, JPEG quality 14 and one framebuffer;
+without PSRAM it retains the smaller HQVGA fallback. Delivery is capped at
+**10 frames/s** with a yielding wait after each frame. This conservative profile
+fits the small central view on S10/S25 Ultra-sized layouts without paying for
+the phone's full display resolution. It prioritizes Wi-Fi/control headroom over
+fine image detail; actual frame rate and motion latency still need hardware
+testing. Camera configuration is in [camera.cpp](camera.cpp).
+
+Gait touchdown is based on a lifted foot's Y coordinate, not the sign of its
+forward/backward Z displacement. Tripod 6's two-position swing lands at its
+front-down phase rather than issuing an extra half-lift there. Regressions cover
+every gait/leg and repeated mirrored forward/backward cycles. These fixes do not
+certify every combination of stride, lift, height, and body correction as reachable.
+
+### Legacy clients and tests
+
+`LEGACY_HTTP_COMMAND_ENABLED` in [setup.h](setup.h) optionally restores
+`POST /values` with seven integer bytes `value0`..`value6` and the original
+checksum. It is OFF by default. With the web controller compiled, legacy
+commands and browser commands cannot own input simultaneously. `/battInfo`
+remains available with `cell1`/`cell2` (503 until the first cached sample).
+The legacy packet protocol retains its old button and enable semantics;
+the browser enable/timeout policy does not retrofit a legacy-client watchdog.
+
+Host regression commands (MSVC Build Tools, Python, Node, and the existing
+firmware ArduinoJson library required):
+
+```powershell
+.\test\foot_sensor\run.ps1
+.\test\web_controller\run.ps1
+```
+
+The web tests execute the embedded browser script with mock inputs, extracted
+actual main-loop dispatch, and the actual HTTP protocol implementation with
+host HTTP/RTOS shims. They do not simulate servo physics or Wi-Fi timing.
+For an offline browser-only layout fixture, run
+`node .\test\web_controller\preview.js` and open `http://127.0.0.1:8765/`.
+The fixture is loopback-only and never controls hardware.
+It explicitly shows "Local preview - not connected to the robot" instead of
+simulated network addresses. On the real robot, "Robot IP on router" means
+the robot's own address on the router network, not the router's address.
+
 ## Standing-height coordinates
 
 The folded home coordinate remains `CHexInitY = 25` mm. The height button
@@ -9,21 +371,35 @@ above home: the corresponding offsets are 20, 31, 40, and 60 mm.
 `MAX_BODY_Y` is the absolute maximum (85); `MAX_BODY_Y_OFFSET` limits added
 lift (60). Body-down can still return to the folded pose separately.
 
-Stance widths are 45, 45, 55, and 25 mm for those presets, selected using absolute height
-thresholds. These dimensions are not a guarantee that every walking, rotation,
-or single-leg target is reachable; terrain-aware walking is not enabled yet.
+Stance widths are 54, 59, 60, and 54 mm for those presets, selected using absolute height
+thresholds. These rounded distances from each coxa pivot target a vertical tibia
+in the neutral, level-ground pose with calibrated 25/35/65 mm links:
+`XZ = coxa + sqrt(femur^2 - (height - tibia)^2)`.
+Integer coordinates introduce a small angular error. The table does not maintain
+vertical tibias during gait, body corrections, uneven contact, or intermediate
+manual heights; those still use the existing preset-threshold selection.
+These dimensions are not a guarantee that every walking, rotation,
+or single-leg target is reachable; foot protection must be enabled separately.
 
-Normal leg lift is `DEFAULT_LEG_LIFT_MM = 15` mm; the high-lift button selects
-`HIGH_LEG_LIFT_MM = 30` mm. Startup remains folded, and manual body-down can
+Normal leg lift is `DEFAULT_LEG_LIFT_MM = 25` mm. The browser Lift +/-5 buttons
+select 25-50 mm; the original controller's high-lift button still toggles
+`HIGH_LEG_LIFT_MM = 40` mm and back to 25 mm.
+These are operator-selected values, not a verified safe envelope; lifts above
+40 mm have not been checked against reach at low heights. In particular,
+the 30 mm default lift did not pass the host IK reach check at the 56 mm stance,
+and 20 mm did not pass at the 45 mm creep height. The defaults are now 25 mm
+and 15 mm respectively. A host geometry sweep passed the 45 mm creep profile
+with 15 mm lift, translation capped at +/-16 mm, no turning, and neutral body
+corrections. This is not physical validation. Test with the body supported;
+contact-aware workspace/joint checks can HOLD rather than completing an
+unreachable requested lift. Startup remains folded, and manual body-down can
 still select heights below the first preset. Travel, turning, and balance
-controls remain unrestricted outside the creep preset. The calculation that passed
-used 15 mm lift, translation within +/-16 mm, no turning, and neutral body
-corrections; neither high lift nor unrestricted controls are validated by it.
+controls remain unrestricted outside the creep preset.
 
 ### Creep preset
 
 In WALK mode, selecting the 45 mm preset activates creep: 8-step tripod gait (type 0),
-15 mm lift, X/Z travel scaled from joystick input and capped at +/-16 mm,
+15 mm lift (`CREEP_LEG_LIFT_MM`), X/Z travel scaled from joystick input and capped at +/-16 mm,
 zero turning, and at least 250 ms per timed step. Double travel and high-lift
 buttons are ignored while creeping, as are gait and balance toggles.
 Translation, body rotation, rotation-center offsets, and temporary vertical
@@ -46,55 +422,147 @@ feet. Foot-contact landing is controlled separately by the walking feature below
 for all WALK gaits and heights, including creep. Runtime protection starts OFF.
 With sticks centered and the gait settled, newly press `INPUT_TIP_SENSOR`
 (mask `0x8000`) to toggle protection. Repeated held-button packets do not toggle
-it again. Enabling requires valid mapping. Toggle requests while moving,
-landing, faulted, or recovering are rejected rather than bypassing protection.
-The normal legacy walking path is used when protection is off. It requires
+it again. Enabling requires the same standing/support preflight as the web
+button. Enabling while moving, landing, faulted, or recovering is rejected.
+A centered press while enabled cancels sensor recovery/HOLD, but not a hard
+battery/geometry fault. Before first activation the normal legacy walking
+path is used when protection is off. After cancellation the pose-preserving
+WALK scheduler remains active without contact checks. It requires
 `FOOT_SENSOR_ENABLED`; it does not alter the isolated test or single-leg mode.
 Normal WALK uses a nonblocking step/output schedule (20 ms output target)
 instead of the old servo busy-wait, allowing command and switch servicing
 during descent. The existing network/ADC/library calls are still synchronous;
 this is not a hard real-time or safety-rated controller.
 
-Choose a standing height while stationary first. Before the first gait step,
-all six switches must show stable contact. On lift-off a foot must demonstrate
+Choose a standing height while stationary first. The estimated body-center
+projection must lie inside the convex hull of contacting feet with
+`FOOT_WALK_SUPPORT_MARGIN_MM = 2` clearance. Before a lift, the same check
+excludes the proposed swing feet. Three feet on one side do not qualify;
+four or five distributed feet can. Positions are commanded estimates and the
+center projection is an approximation, not a measured center of mass or load.
+
+If a proposed lift would remove needed support, its gait targets/step are
+rolled back. Any current airborne group lands first. Only between swings,
+the controller selects the Wave 24 gait (one swing leg at a time), normal
+20 mm maximum lift (`FALLBACK_LEG_LIFT_MM`), translation capped at 16 mm, no turning, and at least
+`FOOT_WALK_FALLBACK_STEP_MS = 400` per step. The selected gait/lift are restored
+after stopping and settling. This fallback can override creep's usual tripod;
+it does not waive contact, support, workspace, or joint checks. If even one-leg
+lifting is unsupported, no new lift is issued.
+
+A supporting switch release has `FOOT_WALK_SUPPORT_GRACE_MS = 200` grace.
+If the remaining support polygon is usable, a persistent release starts a
+bounded downward search for that foot instead of immediately causing HOLD.
+Searches block new gait steps until contact is resolved. Insufficient current
+support blocks new gait steps but allows the existing bounded downward searches
+to reach output; it no longer causes a separate HOLD after 200 ms.
+Persistent missing contacts still end in HOLD at the search timeout; faulty
+switches are not silently treated as load-bearing feet.
+
+On lift-off a foot must demonstrate
 stable release; a switch stuck pressed is not accepted as touchdown.
 Descending gait segments interpolate toward the planned Y over the step
-duration. Raw contact pauses descent; stable contact latches that foot's height.
+duration, including the first 50 Hz PWM frame on the initial descent output;
+this avoids waiting for an extra scheduler cycle before the feet begin lowering.
+Already-confirmed contact still prevents that initial advance. After a previously
+released switch first reports raw contact, the
+foot enters slow seating: at most `FOOT_WALK_SEAT_MM = 2` additional millimeters
+at `FOOT_WALK_SEAT_MM_S = 2` mm/s, in 1 mm increments every 500 ms. Stable contact
+stops seating immediately and latches the height; a switch that stabilizes
+during the normal 15 ms debounce receives no extra seating movement.
+This is not a forced 2 mm push after every touchdown. Bounce does not restart
+the seating distance/time budget. If contact does not stabilize within the
+seating duration plus debounce allowance, the robot enters sensor HOLD rather
+than continuing downward or automatically reversing. Seating remains bounded
+by the existing target-plus-10 mm search ceiling and search timeout, and every
+output still passes workspace and joint checks; new swings require support.
+A switch that never
+released is not allowed to start seating.
 The landed height offset persists through support until the next lift.
 The next gait step is blocked until all pending descending feet have finished
 their segment or confirmed touchdown at their final landing. A tripod landing
 therefore waits for each of its three feet, not just the first switch.
 
 At commanded nominal-ground arrival without contact, the foot searches down
-at `FOOT_WALK_SEARCH_MM_S = 1`, with an extra-distance ceiling of
-`FOOT_WALK_EXTRA_DOWN_MM = 5` and `FOOT_WALK_TIMEOUT_MS = 3000`.
+at `FOOT_WALK_SEARCH_MM_S = 10`, with an extra-distance ceiling of
+`FOOT_WALK_EXTRA_DOWN_MM = 10` and `FOOT_WALK_TIMEOUT_MS = 2000`
+(seating: `FOOT_WALK_SEAT_MM = 2` at `FOOT_WALK_SEAT_MM_S = 5`). These are
+starting values for MG90S servos: 10 mm/s keeps each 1 mm step (100 ms) longer
+than contact detection (5 ms sample + 15 ms debounce + 20 ms output frame), so
+overtravel after touchdown stays within about 1 mm. Keep the timeout at least
+`EXTRA_DOWN_MM / SEARCH_MM_S` seconds.
 The timeout is measured from commanded nominal arrival, NOT measured servo
-arrival. At 1 mm/s only about 2-3 mm of extra travel is possible before timeout,
-so the 5 mm ceiling is not normally reached in one attempt.
+arrival. At 10 mm/s the 10 mm search takes about one second; scheduling/contact
+pauses can make the timeout occur before the full distance is reached.
+Reaching the extra-distance ceiling stops further descent but waits for that
+same timeout, rather than raising an early missing-ground HOLD.
+Support-loss searches use the same bounds from the retained support target;
+first raw contact during a search also permits bounded seating.
+Serial reports `Support search`, `Landing search`, and each `Foot search`
+millimeter so the slow movement can be distinguished from a blocked target.
+`Foot seating` identifies the separate slow switch-engagement movement.
 Active landing/support targets bypass angle smoothing to avoid a queued
 downward target after touchdown; actual servo motion/overtravel remains possible.
 Gait/body/mode changes are ignored during a landing transaction. Centered
 sticks can stop the stored travel request while landing completes.
 Body-balance samples and balance corrections are frozen during the transaction.
 
-Unstable/stuck contact, lost contact on a previously supporting
-foot, invalid sensor mapping, unreachable walking IK, or offset-corrected joint
-limit violations cause `Foot landing HOLD` with a leg/reason. No more servo
+Unresolved/stuck contact, insufficient supporting geometry, or invalid sensor
+mapping cause `Foot landing HOLD` with a leg/reason. No more servo
 targets are issued; PWM continues holding the last successfully issued pose.
 No power-off occurs. This can prevent further commanded steps but cannot
 guarantee support or prevent a fall.
+
+An offset-corrected walking joint limit violation, or a walking target the leg
+cannot reach because of the commanded height, body pose, travel, or lift, does
+not HOLD. Only that frame is rejected: the gait, landing state, and joint angles
+are restored, the last valid pose is held, and the web notice shows `Paused:
+walking joint limit (leg)` or `Paused: unreachable walking target (leg)`. While
+paused, no landing checks run and landing timers (descent, grace, search,
+seating) are frozen. Changing movement, height, body pose, lift, or gait
+resumes normal running, and landing checks continue from where they stopped.
+
+If the target becomes unreachable only because a landing foot searched below
+its planned height without finding ground (reachable without the search depth),
+the target is not issued and the frame is rolled back. It is then handled as
+missing ground (`no ground within leg reach`), exactly like the search timeout
+below: commands are bypassed while the robot retraces to the last pose with all
+feet down, walks three gait cycles opposite to the last travel, and settles.
 
 On a genuine missing-ground search timeout, the controller first attempts to
 retrace the airborne feet's recorded commanded gait-coordinate paths, holding
 the other foot targets. Per-foot history has 256 frames; overflow invalidates
 it instead of silently using a truncated path. Returning to the old coordinates
-is not enough: all six switches must indicate contact before opposite travel
-starts. Path recovery has a 10-second timeout. These coordinates are requested
+is not enough: returning feet must contact and the remaining feet must provide
+a usable support polygon before opposite travel starts.
+Path recovery has a 10-second timeout. These coordinates are requested
 targets, not measured physical positions; servo lag, body motion, slipping,
 and obstacles can invalidate a physical retrace.
 
+Table edge: if a support foot loses contact while walking (it stepped onto an
+edge and slid off) and its support search times out, the same retreat runs
+instead of HOLD. The lost foot is raised back to its last support height and is
+not searched again; it counts as missing support until it touches down again.
+Because the held feet are already the robot's only support, the retrace of
+airborne feet is not blocked by the support-polygon check in this case; it only
+lowers them back onto ground they left. If the reverse walk cannot lift a group
+without that foot, the slow one-leg wave fallback starts with the lost foot so
+it steps back onto the surface first. A failed retreat or a new fault during
+the retreat still enters HOLD.
+
+If a support foot loses contact while the gait is at rest (or right after a
+retreat settles), it is retracted to its last support height, the timeout is
+cleared, and the foot is lifted and set down again at its home spot with the
+normal slow landing search (recovery state `REPLACE`). The other feet must
+form a support polygon first. If it touches, all six feet are in contact and
+walking continues normally. If the re-placed foot still finds no ground, the
+robot walks back once (three gait cycles opposite to the last travel) and
+checks again; a second failure, or no known travel direction, enters HOLD. A
+retreat ends only when all six feet report contact; then center the sticks and
+send fresh movement.
+
 If history is unavailable or restoration fails, opposite travel is permitted
-only with all six contacts; otherwise recovery enters HOLD. With support
+only with a usable support polygon; otherwise recovery enters HOLD. With support
 restored, X/Z translation and rotation reverse the last nonzero travel request.
 The controller requests three complete gait periods of opposite travel, then
 zeros travel and finishes settling the feet. Each reverse target still passes
@@ -104,14 +572,25 @@ additional steps beyond those three periods.
 
 After stopping, all sticks must be centered in a received command before fresh
 movement is accepted. Commands cannot change mode, height, or direction during
-automatic recovery. An unrecoverable HOLD requires securing the body and
-restarting; the TIP SENSOR toggle does not clear it or waive checks.
-There is no physical position feedback, force sensing, or support-polygon check.
+automatic recovery. To cancel sensor-related HOLD/recovery, center the inputs
+and press **Foot sensor** (or newly press TIP SENSOR). No new PWM target is
+issued by cancellation; the last issued gait targets and landing offsets are
+retained, not replaced with home coordinates. Control is disabled and queued
+travel is cleared. Enable Control explicitly with centered inputs, then send
+fresh movement; enabling alone does not move the legs. This resumes WALK
+without contact checks, so secure the robot before using it. Only WALK/speed
+settings are allowed in this pose-preserving bypass; after settling, Foot
+sensor can be re-enabled if its support preflight passes, preserving offsets.
+Battery and geometry/joint faults remain latched and require correction/restart.
+There is no measured physical position, force, or center-of-mass feedback;
+switch contact and a commanded support polygon cannot guarantee stability.
 
 For initial validation use supported creep at 45 mm, short commands, and
 surfaces under ALL feet. Verify multi-foot touchdown, no-surface HOLD, stuck
 switch HOLD, missing-history HOLD, recorded-path recovery, three-cycle opposite
-travel and fresh-input interlock, and that no next support group lifts
+travel and fresh-input interlock, four/five-contact support patterns, bounded
+support-loss search, slow-wave fallback, sensor HOLD cancellation and explicit
+resume, hard-fault refusal, and that no next support group lifts
 before the pending landing is resolved. Only proceed to loaded testing after
 mechanical clearance/overtravel is confirmed. Higher gaits, high lift, larger
 strides, turns, and balance-enabled walking can still violate geometry and

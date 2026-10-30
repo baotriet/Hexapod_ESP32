@@ -1,4 +1,4 @@
-#ifndef PID_H_   /* Include guard */
+#ifndef PID_H_ /* Include guard */
 #define PID_H_
 
 #include "setup.h"

@@ -49,13 +49,12 @@ short helperFunc_smoothBasedVal(short currentVal, short targetVal, byte baseDiv,
 
 /**
  * @brief Reverse command direction from 2 joysticks left and right
- * 
+ *
  * @param lx    left x command
  * @param ly    left y command
  * @param rx    right x command
  * @param ry    right y command
  */
 void helperFunc_reverseCmd(byte *lx, byte *ly, byte *rx, byte *ry);
-
 
 #endif /* HELPER_FUNC_H_ */

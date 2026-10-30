@@ -2,9 +2,10 @@
 #include "footSensor.h"
 #include "driver/pcf8575.h"
 
-static const int sensorPins[NUM_OF_LEGS] = {
-    FOOT_SENSOR_RF_PIN, FOOT_SENSOR_RM_PIN, FOOT_SENSOR_RR_PIN,
-    FOOT_SENSOR_LF_PIN, FOOT_SENSOR_LM_PIN, FOOT_SENSOR_LR_PIN};
+// Translate expander pins once so gait code and diagnostics always use physical leg indices.
+static const int sensorPins[NUM_OF_LEGS] = {FOOT_SENSOR_RF_PIN, FOOT_SENSOR_RM_PIN,
+                                            FOOT_SENSOR_RR_PIN, FOOT_SENSOR_LF_PIN,
+                                            FOOT_SENSOR_LM_PIN, FOOT_SENSOR_LR_PIN};
 static const char *const sensorNames[NUM_OF_LEGS] = {"RF", "RM", "RR", "LF", "LM", "LR"};
 static_assert(RF == 0 && RM == 1 && RR == 2 && LF == 3 && LM == 4 && LR == 5,
               "Update sensorPins for the configured leg order");
@@ -25,12 +26,15 @@ static bool sampled;
 
 bool footSensor_mappingValid()
 {
+  // Duplicate or missing assignments could stop one leg using another leg's contact.
   uint8_t used = 0;
   for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
   {
     int pin = sensorPins[leg];
     if (pin < 0 || pin >= NUM_OF_LEGS || (used & (1U << pin)))
+    {
       return false;
+    }
     used |= 1U << pin;
   }
   return true;
@@ -45,21 +49,27 @@ void footSensor_init()
   lastReport = lastSample;
 #endif
   for (byte pin = 0; pin < NUM_OF_LEGS; ++pin)
+  {
     candidateSince[pin] = lastSample;
+  }
   Serial.println(footSensor_mappingValid()
                      ? F("Foot sensors: mapping configured; verify each physical leg.")
-                     : F("Foot sensors: UNMAPPED. Configure footSensorCfg.h; raw bits P05..P00 are available."));
+                     : F("Foot sensors: UNMAPPED. Configure footSensorCfg.h; raw bits P05..P00 are "
+                         "available."));
 }
 
 void footSensor_update()
 {
   uint32_t now = millis();
   if (sampled && uint32_t(now - lastSample) < FOOT_SENSOR_SAMPLE_MS)
+  {
     return;
+  }
   lastSample = now;
   bool first = !sampled;
   sampled = true;
   rawMask = pcf8575_getValue(0, NUM_OF_LEGS - 1);
+  // Require an unchanged candidate for the full debounce interval; count time, not loop iterations.
   for (byte pin = 0; pin < NUM_OF_LEGS; ++pin)
   {
     uint8_t bit = 1U << pin;
@@ -70,23 +80,34 @@ void footSensor_update()
     }
     uint32_t debounce = (candidatePins & bit) ? FOOT_SENSOR_CONTACT_MS : FOOT_SENSOR_RELEASE_MS;
     if (uint32_t(now - candidateSince[pin]) >= debounce)
+    {
       stablePins = (stablePins & ~bit) | (candidatePins & bit);
+    }
   }
 
   uint8_t previousMask = sensorMask;
   sensorMask = 0;
   if (footSensor_mappingValid())
+  {
     for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    {
       if (stablePins & (1U << sensorPins[leg]))
+      {
         sensorMask |= 1U << leg;
+      }
+    }
+  }
 
   uint8_t changed = previousMask ^ sensorMask;
+  // Named change-only messages make wiring checks readable without flooding Serial during walking.
   for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
     if (changed & (1U << leg))
     {
       Serial.print(sensorNames[leg]);
       Serial.println((sensorMask & (1U << leg)) ? F(": CONTACT") : F(": RELEASED"));
     }
+  }
 
 #ifdef DEBUG_FOOT_SENSOR
   if (uint32_t(now - lastReport) >= FOOT_SENSOR_REPORT_MS)
@@ -112,7 +133,9 @@ void footSensor_report()
   for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
   {
     if (leg)
+    {
       Serial.print(F(", "));
+    }
     Serial.print(sensorNames[leg]);
     Serial.print((sensorMask & (1U << leg)) ? F("=CONTACT") : F("=RELEASED"));
   }
@@ -126,6 +149,7 @@ bool footSensor_isAnyLegTriggered()
 
 bool footSensor_isAllLegsTriggered()
 {
+  // "All" requires every configured bit; a nonzero mask means only "any".
   return sensorMask == ((1U << NUM_OF_LEGS) - 1);
 }
 
@@ -141,6 +165,7 @@ bool footSensor_isTriggered(byte legNr)
 
 bool footSensor_isRawTriggered(byte legNr)
 {
+  // Landing can pause on the first electrical contact rather than descend through debounce.
   if (legNr >= NUM_OF_LEGS || !footSensor_mappingValid())
   {
     Serial.println(F("Foot sensor: raw contact requested with invalid leg/mapping."));
@@ -156,6 +181,8 @@ uint8_t footSensor_getSensorMask()
 
 bool footSensor_isReleasedStable(byte legNr)
 {
+  // A lifted foot must really release; an uninitialized or stuck-pressed switch is not touchdown
+  // proof.
   if (legNr >= NUM_OF_LEGS || !footSensor_mappingValid())
   {
     Serial.println(F("Foot sensor: release requested with invalid leg/mapping."));
