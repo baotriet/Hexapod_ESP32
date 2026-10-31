@@ -8,6 +8,7 @@
 #include "battMan.h"
 #include "webControl.h"
 #include "wifey.h"
+#include "ota.h"
 
 static bool httpDataReady = false;
 static byte httpInputData[7];
@@ -213,6 +214,7 @@ void http_init()
 #ifdef WEB_CONTROLLER_ENABLED
     webControl_register(data_httpd);
 #endif
+    ota_register(data_httpd);
     httpd_register_uri_handler(data_httpd, &batt_uri);
   }
   else

@@ -15,6 +15,7 @@
 #include "http.h"
 #include "camera.h"
 #include "wifey.h"
+#include "ota.h"
 #include "footSensor.h"
 #include "footSensorTest.h"
 #include "footLanding.h"
@@ -2080,7 +2081,18 @@ void setup()
   //  after motor init to calibrate the sensor
 
   currentState = STATE_IDLE;
+#ifndef BUILDCFG_BUZZER_AFTER_INIT_DISABLED
   buzzer_toggle(3, 200, 100);
+#endif
+  digitalWrite(LED_RED_GPIO, HIGH);
+  pinMode(LED_RED_GPIO, OUTPUT);
+  for (byte i = 0; i < 3; ++i)
+  {
+    digitalWrite(LED_RED_GPIO, LOW);
+    delay(200);
+    digitalWrite(LED_RED_GPIO, HIGH);
+    delay(100);
+  }
 #endif
 #ifdef DEBUG
   Serial.println("DONE: setup");
@@ -3018,6 +3030,10 @@ void loop()
 #ifndef CALIBRATION_ENABLED
 #if defined(HTTP_ENABLED) || defined(CAMERA_ENABLED)
   wifi_update(!bHexON && !webArmed);
+  if (ota_locked())
+  {
+    return;
+  }
 #endif
 #ifdef WEB_CONTROLLER_ENABLED
   webService();

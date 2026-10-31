@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include "wifey.h"
+#include "ota.h"
 
 // Track network-stack initialization separately from router connection; the hotspot can work
 // offline.
@@ -108,6 +109,11 @@ void wifi_init()
 
 void wifi_update(bool allowConfiguration)
 {
+  ota_update(allowConfiguration);
+  if (ota_locked())
+  {
+    return;
+  }
   // Provision only while disabled and apply on reset; changing networks must not interrupt active
   // motion.
   static char buffer[640];
@@ -151,10 +157,14 @@ void wifi_update(bool allowConfiguration)
     {
       Serial.println("Network configuration rejected: disable robot first.");
     }
-    else if (overflow || (strncmp(buffer, "NET ", 4) && strncmp(buffer, "HOTSPOT ", 8)))
+    else if (overflow)
     {
-      Serial.println("Use NET or HOTSPOT {\"ssid\":\"...\",\"password\":\"...\"}; input not echoed "
-                     "by firmware.");
+      Serial.println("Configuration rejected: Serial line too long (maximum 639 bytes).");
+    }
+    else if (strncmp(buffer, "NET ", 4) && strncmp(buffer, "HOTSPOT ", 8))
+    {
+      Serial.println("Use NET/HOTSPOT {\"ssid\":\"...\",\"password\":\"...\"}; "
+                     "OTA has no password. Input not echoed by firmware.");
     }
     else
     {
@@ -165,10 +175,31 @@ void wifi_update(bool allowConfiguration)
       auto error = deserializeJson(doc, buffer + (hotspot ? 8 : 4));
       String ssid = doc["ssid"] | "";
       String password = doc["password"] | "";
-      if (error || ssid.isEmpty() || ssid.length() > 32 || password.length() < 8 ||
-          password.length() > 63)
+      const char *name = hotspot ? "HOTSPOT" : "NET";
+      if (error)
       {
-        Serial.println("Invalid network settings: SSID 1-32 bytes, password 8-63 bytes.");
+        Serial.printf("%s settings rejected: invalid JSON (%s). Use straight double quotes "
+                      "and a complete JSON object.\n",
+                      name, error.c_str());
+      }
+      else if (doc["password"].isNull())
+      {
+        Serial.printf("%s settings rejected: missing password field. Use the lowercase key "
+                      "\"password\".\n",
+                      name);
+      }
+      else if (!doc["password"].is<const char *>())
+      {
+        Serial.printf("%s settings rejected: password must be a JSON string in double quotes.\n",
+                      name);
+      }
+      else if (password.length() < 8 || password.length() > 63)
+      {
+        Serial.printf("%s settings rejected: password must be 8-63 bytes.\n", name);
+      }
+      else if (!doc["ssid"].is<const char *>() || ssid.isEmpty() || ssid.length() > 32)
+      {
+        Serial.printf("%s settings rejected: ssid must be a JSON string of 1-32 bytes.\n", name);
       }
       else
       {
@@ -183,7 +214,7 @@ void wifi_update(bool allowConfiguration)
                     settings.putString(hotspot ? "ap-password" : "password", password) > 0;
           settings.end();
           Serial.println(ok ? (hotspot ? "Hotspot saved. Reset robot to apply."
-                                       : "Network saved. Reset robot to apply.")
+                                      : "Network saved. Reset robot to apply.")
                             : "Network save failed; configure again.");
         }
       }

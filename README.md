@@ -88,6 +88,10 @@ usable with smaller sticks flanking the camera and all settings below.
 
 ### First connection
 
+After normal initialization, the active-low red LED (GPIO 33) blinks three
+times (200 ms on, 100 ms off) and stays off to indicate initialization is done.
+This adds 0.9 seconds to startup and does not run in isolated foot-test mode.
+
 1. Support the robot securely before uploading/resetting. Existing folded
    startup positioning is unchanged; opening the page does not enable motion.
 2. Open the USB Serial monitor at 115200 baud, newline/LF. Send one line:
@@ -141,6 +145,60 @@ your phone to the new hotspot name/password. Its page stays at
 For compatibility, until HOTSPOT is configured, existing NET settings still
 provide `Hexapod-Control` with the router password. Once HOTSPOT is saved,
 changing NET no longer changes the hotspot password.
+
+### Firmware updates over Wi-Fi (browser .bin upload)
+
+The first OTA-enabled version **must be uploaded by USB/serial** using the
+`esp32` environment. It installs the standard `default.csv` partition table with
+two 1,310,720-byte application slots instead of the previous single large slot.
+Do not OTA this version onto the old partition layout. Normal PlatformIO
+uploads still use serial on COM4.
+Back up any filesystem data before changing partitions.
+
+Support the robot securely for every update: successful OTA restarts the robot
+and runs its existing startup positioning. Disable **Control**, turn **Camera**
+off, close other control tabs, and keep a stable power supply. Do not update
+while walking. Given an unstable router connection, prefer the direct robot
+hotspot and keep the computer connected despite the "no internet" warning.
+
+**OTA has no password authentication and transfers are not encrypted. Anyone
+who can reach the robot can install firmware while Control is disabled.**
+Use only trusted private networks. The hotspot/router Wi-Fi passwords are
+unchanged. The old Serial `OTA` command is no longer supported, and previously
+saved OTA passwords are ignored. ArduinoOTA/espota and its UDP listener have been removed.
+Install this browser-update version by USB/serial before using the update page.
+
+For subsequent updates:
+
+1. Build with `pio run -e esp32`.
+2. Connect the computer/phone to the robot hotspot or the same router.
+3. Open `http://192.168.4.1/update` on the hotspot, or
+   `http://ROBOT_ROUTER_IP/update` on the router. The controller also has a
+   **Firmware update (.bin)** link.
+4. Select `.pio/build/esp32/firmware.bin` from the project. This must be the
+   **application image built for this robot**, not `bootloader.bin`,
+   `partitions.bin`, or a merged/full-flash image. On a phone, first copy the
+   application file onto the phone.
+5. Disable Control, wait until motion is disabled, turn Camera off, close other
+   control tabs, and support the robot. Click **Upload firmware** and confirm.
+6. Wait for the success message and automatic restart, then refresh the
+   controller. Do not disconnect power or close the upload page during flashing.
+
+Uploads use HTTP on port 80, without UDP invitations, reverse TCP connections,
+mDNS, environment variables, or an `esp32-ota` environment. Do not expose the
+robot's HTTP port to the internet. Invalid origins, content types, empty images,
+and images larger than the inactive application slot are rejected before
+flashing. ESP32 Update validates the image before selecting it for the next boot;
+this is not signature authentication or proof that firmware is safe/correct.
+
+The motion thread must acknowledge that both Control and motion are disabled
+before flashing starts. Once a transfer starts, motion and command execution
+remain locked until restart, including after a failed transfer. Reset the robot before retrying a
+failed transfer; do not assume the previous upload succeeded. Successful
+uploads reboot automatically; verify the success message on the update page and refresh the
+controller page. Interrupted updates normally leave the previous application
+bootable, but this is not power-loss rollback or validation of a newly booted
+application. Keep serial flashing available for recovery.
 
 ### Controls and stopping
 
