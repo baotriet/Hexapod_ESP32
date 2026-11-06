@@ -451,6 +451,9 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
     let sequence = 0;
     let enableSince = 0;
     let lastAccepted = 0;
+    // A changed boot ID means the robot restarted; keep the reason visible until Control is re-enabled.
+    let bootId = null;
+    let restartNote = "";
     // Codes match the firmware's STOP_REASONS table so robot messages name the actual trigger.
     const STOP_TEXT = [
       "",
@@ -493,6 +496,7 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
       }
       neutral();
       enabled = true;
+      restartNote = "";
       enableSince = Date.now();
       lastAccepted = enableSince;
       actions = [];
@@ -764,7 +768,9 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
         if (action.action && actions[0] === action) actions.shift();
         // A late response to an older stop must not clear a newer stop requested while it was in flight.
         if (wasStop && version === sequence) stopping = false;
-        $("link").textContent = enabled ? "Connected - control requested" : "Connected - disabled";
+        $("link").textContent = enabled
+          ? "Connected - control requested"
+          : restartNote || "Connected - disabled";
       } catch (e) {
         // A real interruption drops local arming and sends at most a best-effort stop; never auto-resume.
         const wasEnabled = enabled;
@@ -772,7 +778,9 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
         neutral();
         actions = [];
         stopping = wasEnabled;
-        $("link").textContent = "Control interrupted: " + e.message;
+        $("link").textContent =
+          "Control interrupted: " +
+          (e.name === "AbortError" ? "no reply from robot within 1.5 s" : e.message);
       } finally {
         clearTimeout(timer);
         flight = false;
@@ -792,6 +800,18 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
         const r = await fetch("/api/status", { signal: controller.signal });
         if (!r.ok) throw Error(r.status);
         const s = await r.json();
+        if (s.boot !== undefined) {
+          if (bootId !== null && s.boot !== bootId) {
+            // A restarted robot is disarmed; never carry the old page's arming or movement across it.
+            enabled = false;
+            neutral();
+            actions = [];
+            stopping = false;
+            restartNote = `Robot restarted (${s.resetReason || "unknown reason"}) - enable Control explicitly`;
+            $("link").textContent = restartNote;
+          }
+          bootId = s.boot;
+        }
         if (s.sensorBypass && !s.armed && enabled && !actions.some((a) => a.action === "enable")) {
           // Reflect sensor cancellation locally so the next Control click enables instead of disabling again.
           enabled = false;

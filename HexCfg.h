@@ -233,6 +233,21 @@
 #define CREEP_LEG_LIFT_MM 20
 #define FALLBACK_LEG_LIFT_MM 20
 #define CREEP_TRAVEL_MM 16
+// Recovery chooses the highest safe 20..8 mm clearance, then bounded placement/slide probes.
+#define FOOT_RECOVERY_PLACE_MM 8
+#define FOOT_RECOVERY_CLEARANCE_MM 20
+#define FOOT_RECOVERY_CLEARANCE_STEP_DOWN_MM 2
+#define FOOT_RECOVERY_CLEARANCE_MIN_MM 8
+// Separate 5 mm servo moves tuck at most 15 mm before sliding; stop at the IK margin.
+#define FOOT_RECOVERY_TUCK_STEP_MM 5
+#define FOOT_RECOVERY_TUCK_MAX_MM 15
+#define FOOT_RECOVERY_RETREAT_MM 8
+// Runtime IK (5 mm / 5 degree margin) and support polygon, not this ceiling, limit shifts.
+// Approximate radial room at Y=45/56/65/85 is 14/31/34/13 mm respectively.
+#define FOOT_RECOVERY_SHIFT_STEP_MM 6
+#define FOOT_RECOVERY_SHIFT_MAX_MM 30
+#define FOOT_RECOVERY_WALK_STEPS 2
+#define FOOT_RECOVERY_WALK_STEP_MM 15
 #define CREEP_STEP_MS 250
 #define DEFAULT_LEG_LIFT_MM 30
 // Independent high value avoids doubling the new normal lift into the previously rejected 60 mm.

@@ -17,6 +17,10 @@ long footLanding_y(byte leg, long gaitY);
 long footLanding_horizontal(byte leg, long previous, long planned);
 bool footLanding_direct(byte leg);
 bool footLanding_retry();
+// Convert a timed-out missing-ground search into a lost foot held at its last valid support height.
+bool footLanding_startRecovery();
+byte footLanding_recoveryMask();
+bool footLanding_clearRecovery();
 // Sensor exit may waive contact checks, but must never turn an invalid pose or low power into
 // motion.
 enum FootFault
@@ -38,14 +42,7 @@ bool footLanding_timedOut();
 bool footLanding_supportLost();
 // Support feet that lost ground and wait for their next swing (bit per leg).
 byte footLanding_lostMask();
-// Stop a failed re-place search for this leg and mark it lost (raised to its landing height).
-void footLanding_abandon(byte leg);
 bool footLanding_allSupported();
-bool footLanding_beginRestore();
-bool footLanding_restoring();
-bool footLanding_restored();
-void footLanding_record(const long x[], const long y[], const long z[], const long rotation[]);
-void footLanding_restoreTargets(long x[], long y[], long z[], long rotation[]);
 // Joint-limit pause: undo a rejected frame and freeze landing timers while no landing checks run.
 void footLanding_save();
 void footLanding_rollback();

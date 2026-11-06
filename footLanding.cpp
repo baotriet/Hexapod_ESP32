@@ -19,6 +19,7 @@ struct LandingLeg
   long target;
   long planned;
   long start;
+  long supportY;
   bool released;
   bool supported;
   bool nominal;
@@ -37,6 +38,7 @@ struct LandingLeg
   // Support foot that lost ground (e.g. table edge): held at its last support height without
   // searching again until it touches or its next swing places it elsewhere.
   bool lost;
+  bool recoveryMove;
 };
 static LandingLeg legs[NUM_OF_LEGS];
 static bool faulted;
@@ -47,31 +49,11 @@ static char faultReason[112];
 static bool engaged;
 static bool timedOut;
 static bool supportLost;
-static bool restoring;
-static bool restoreForLoss;
-static bool restored;
-static uint32_t restoreStarted;
-static uint32_t restoreFrame;
-// Bound ESP32 RAM usage; an overflow invalidates recovery rather than inventing a shortened path.
-static const unsigned HISTORY_CAPACITY = 256;
-struct FootFrame
-{
-  short x, y, z, rotation;
-};
-struct FootHistory
-{
-  FootFrame frames[HISTORY_CAPACITY];
-  unsigned count;
-  unsigned cursor;
-  bool valid;
-  bool needed;
-};
-static FootHistory histories[NUM_OF_LEGS];
+// Only the leg whose search actually expired is a recovery failure; other searches continue.
+static byte timeoutLeg = NUM_OF_LEGS;
 static const char *const names[] = {"RF", "RM", "RR", "LF", "LM", "LR"};
 static LandingLeg savedLegs[NUM_OF_LEGS];
-static unsigned savedCount[NUM_OF_LEGS], savedCursor[NUM_OF_LEGS];
-static bool savedEngaged, savedRestoring, savedRestored;
-static uint32_t savedRestoreFrame;
+static bool savedEngaged;
 
 static_assert(FOOT_WALK_EXTRA_DOWN_MM > 0 && FOOT_WALK_SEARCH_MM_S > 0 && FOOT_WALK_TIMEOUT_MS > 0,
               "Walking search limits must be positive");
@@ -85,37 +67,20 @@ void footLanding_init()
   memset(legs, 0, sizeof(legs));
   faulted = engaged = false;
   faultReason[0] = 0;
-  timedOut = supportLost = restoring = restored = false;
-  memset(histories, 0, sizeof(histories));
+  timedOut = supportLost = false;
+  timeoutLeg = NUM_OF_LEGS;
 }
 
 void footLanding_save()
 {
   memcpy(savedLegs, legs, sizeof(legs));
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    savedCount[leg] = histories[leg].count;
-    savedCursor[leg] = histories[leg].cursor;
-  }
   savedEngaged = engaged;
-  savedRestoring = restoring;
-  savedRestored = restored;
-  savedRestoreFrame = restoreFrame;
 }
 
 void footLanding_rollback()
 {
-  // History frames are only appended after output, so restoring counts/cursors undoes plan/replay.
   memcpy(legs, savedLegs, sizeof(legs));
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    histories[leg].count = savedCount[leg];
-    histories[leg].cursor = savedCursor[leg];
-  }
   engaged = savedEngaged;
-  restoring = savedRestoring;
-  restored = savedRestored;
-  restoreFrame = savedRestoreFrame;
 }
 
 void footLanding_delay(uint32_t ms)
@@ -132,8 +97,6 @@ void footLanding_delay(uint32_t ms)
     s.seatStarted += ms;
     s.lastSeat += ms;
   }
-  restoreStarted += ms;
-  restoreFrame += ms;
 }
 
 long footLanding_searchDepth(byte leg)
@@ -148,10 +111,11 @@ long footLanding_searchDepth(byte leg)
 
 void footLanding_noGround(byte leg)
 {
-  // Same classification as the search timeout so the existing retrace/reverse recovery applies.
+  // Classify unreachable search depth exactly like a missing-ground timeout for recovery.
   const LandingLeg &s = legs[leg];
   timedOut = s.released;
   supportLost = s.supportSearch;
+  timeoutLeg = leg;
   footLanding_fail(s.supportSearch ? "support search beyond leg reach"
                                    : "no ground within leg reach",
                    leg);
@@ -168,6 +132,7 @@ void footLanding_resume(const long plannedY[], const long offsets[])
     legs[leg].planned = plannedY[leg];
     legs[leg].offset = offsets[leg];
     legs[leg].current = plannedY[leg] + offsets[leg];
+    legs[leg].supportY = legs[leg].current;
     legs[leg].supported = footSensor_isTriggered(leg);
   }
 }
@@ -306,9 +271,10 @@ void footLanding_plan(const long previousY[], const long plannedY[], uint32_t du
         s.released = false;
         // A new swing starts its own ground search; the previous touchdown offset must not
         // accumulate.
-        s.offset = 0;
-        // Keep the last grounded frame as the beginning of this swing's return path.
-        histories[leg].count = histories[leg].valid ? 1 : 0;
+        if (!s.recoveryMove)
+        {
+          s.offset = 0;
+        }
       }
       s.phase = SWING;
       s.seating = false;
@@ -348,7 +314,7 @@ void footLanding_plan(const long previousY[], const long plannedY[], uint32_t du
 
 void footLanding_update()
 {
-  if (!engaged || faulted || restoring)
+  if (!engaged || faulted)
   {
     return;
   }
@@ -370,6 +336,8 @@ void footLanding_update()
           s.lost = false;
           s.supported = true;
           s.releasePending = false;
+          s.supportY = s.current;
+          s.recoveryMove = false;
         }
         continue;
       }
@@ -414,6 +382,8 @@ void footLanding_update()
       s.supported = true;
       s.seating = false;
       s.releasePending = s.supportSearch = false;
+      s.supportY = s.current;
+      s.recoveryMove = false;
       Serial.print(F("Touchdown "));
       Serial.print(names[leg]);
       Serial.print(F(" gait Y="));
@@ -426,6 +396,7 @@ void footLanding_update()
       // retreat; a switch that never released may not.
       timedOut = s.released;
       supportLost = s.supportSearch;
+      timeoutLeg = leg;
       footLanding_fail(s.supportSearch ? "support search timeout"
                        : s.released    ? "no ground within landing timeout"
                                        : "switch never released",
@@ -613,8 +584,7 @@ bool footLanding_retry()
     // Retrying must not grant a bouncing contact a fresh seating distance or erase its used budget.
     if (s.phase == SEARCHING && s.supportSearch)
     {
-      // No ground under this support foot (table edge): raise it back to its last support height
-      // and stop searching, so the reverse walk can step it back onto the surface.
+      // No ground under this support foot (table edge): stop searching at its last support height.
       s.current = s.target;
       s.phase = SUPPORT;
       s.supportSearch = s.seating = s.supported = s.releasePending = false;
@@ -632,8 +602,82 @@ bool footLanding_retry()
   }
   faulted = false;
   timedOut = supportLost = false;
-  restoring = false;
+  timeoutLeg = NUM_OF_LEGS;
   Serial.println(F("Landing retry accepted; gait waits for contact."));
+  return true;
+}
+
+byte footLanding_recoveryMask()
+{
+  byte mask = 0;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    if (legs[leg].lost || leg == timeoutLeg)
+    {
+      mask |= 1 << leg;
+    }
+  }
+  return mask;
+}
+
+bool footLanding_startRecovery()
+{
+  if (!faulted || faultKind != FOOT_FAULT_SENSOR || !timedOut ||
+      !footSensor_mappingValid())
+  {
+    return false;
+  }
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    if (legs[leg].phase == SUPPORT && legs[leg].supported &&
+        !footSensor_isTriggered(leg))
+    {
+      return false;
+    }
+  }
+  bool found = false;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    LandingLeg &s = legs[leg];
+    // A search still in progress has not failed: keep it searching and let recovery wait for it.
+    if (s.phase == SEARCHING && (leg == timeoutLeg || s.lost))
+    {
+      s.current = s.supportY;
+      s.offset = s.supportY - s.planned;
+      s.phase = SUPPORT;
+      s.supportSearch = s.seating = s.supported = s.releasePending = false;
+      s.lost = s.recoveryMove = true;
+      found = true;
+    }
+    else if (s.lost)
+    {
+      s.current = s.supportY;
+      s.offset = s.supportY - s.planned;
+      s.recoveryMove = true;
+      found = true;
+    }
+  }
+  if (!found)
+  {
+    return false;
+  }
+  faulted = timedOut = supportLost = false;
+  timeoutLeg = NUM_OF_LEGS;
+  return true;
+}
+
+bool footLanding_clearRecovery()
+{
+  if (faulted || footLanding_busy() || !footSensor_isAllLegsTriggered())
+  {
+    return false;
+  }
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    legs[leg].lost = legs[leg].recoveryMove = false;
+  }
+  timedOut = supportLost = false;
+  timeoutLeg = NUM_OF_LEGS;
   return true;
 }
 
@@ -644,21 +688,6 @@ bool footLanding_timedOut()
 bool footLanding_supportLost()
 {
   return supportLost;
-}
-void footLanding_abandon(byte leg)
-{
-  // A re-placed foot found no ground: stop its search at the planned landing height and treat it
-  // like a support foot that lost ground, so the reverse walk is not blocked by it.
-  if (leg >= NUM_OF_LEGS || legs[leg].phase != SEARCHING)
-  {
-    return;
-  }
-  LandingLeg &s = legs[leg];
-  s.current = s.target;
-  s.offset = s.target - s.planned;
-  s.phase = SUPPORT;
-  s.supportSearch = s.seating = s.supported = s.releasePending = false;
-  s.lost = true;
 }
 byte footLanding_lostMask()
 {
@@ -672,155 +701,8 @@ byte footLanding_lostMask()
   }
   return mask;
 }
-bool footLanding_restoring()
-{
-  return restoring;
-}
-bool footLanding_restored()
-{
-  return restored;
-}
-
 bool footLanding_allSupported()
 {
   // Recovery needs a usable support pattern, not necessarily six functioning/contacting switches.
   return footLanding_supportReady();
-}
-
-void footLanding_record(const long x[], const long y[], const long z[], const long rotation[])
-{
-  // Record issued commands from the last grounded placement, not hypothetical future gait targets.
-  if (restoring || faulted)
-  {
-    return;
-  }
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    FootHistory &h = histories[leg];
-    FootFrame frame = {short(x[leg]), short(y[leg]), short(z[leg]), short(rotation[leg])};
-    if (legs[leg].phase == SUPPORT && footSensor_isTriggered(leg))
-    {
-      h.frames[0] = frame;
-      h.count = 1;
-      h.valid = true;
-    }
-    else if (h.valid)
-    {
-      if (h.count == HISTORY_CAPACITY)
-      {
-        h.valid = false; // Never silently replay a truncated path.
-      }
-      else
-      {
-        h.frames[h.count++] = frame;
-      }
-    }
-  }
-}
-
-bool footLanding_beginRestore()
-{
-  // Retrace only when all returning feet have complete history; guessing a return path can hit
-  // obstacles.
-  if (!timedOut || restoring)
-  {
-    return false;
-  }
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    FootHistory &h = histories[leg];
-    h.needed = legs[leg].phase != SUPPORT;
-    if (h.needed && (!h.valid || !h.count))
-    {
-      Serial.println(
-          F("Return path unavailable; opposite travel requires confirmed supporting geometry."));
-      return false;
-    }
-  }
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    histories[leg].cursor = histories[leg].count ? histories[leg].count - 1 : 0;
-    // A support foot that lost ground returns to its last support frame, where ground is gone.
-    legs[leg].lost = legs[leg].phase == SEARCHING && legs[leg].supportSearch;
-  }
-  restoreStarted = restoreFrame = millis();
-  restoring = true;
-  restored = false;
-  restoreForLoss = supportLost;
-  faulted = timedOut = supportLost = false;
-  Serial.println(F("Recovery: retracing airborne feet; support-foot targets held."));
-  return true;
-}
-
-void footLanding_restoreTargets(long x[], long y[], long z[], long rotation[])
-{
-  // Hold supporting feet while replaying airborne feet backward; commanded coordinates are not
-  // feedback.
-  if (!restoring || faulted)
-  {
-    return;
-  }
-  uint32_t now = millis();
-  bool due = uint32_t(now - restoreFrame) >= 20;
-  if (due)
-  {
-    restoreFrame = now;
-  }
-  bool complete = true;
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    FootHistory &h = histories[leg];
-    if (!h.needed)
-    {
-      continue;
-    }
-    if (due && h.cursor)
-    {
-      --h.cursor;
-    }
-    FootFrame &frame = h.frames[h.cursor];
-    x[leg] = frame.x;
-    y[leg] = frame.y;
-    z[leg] = frame.z;
-    rotation[leg] = frame.rotation;
-    // Reaching an old coordinate is not proof of ground: returning feet must also confirm contact.
-    // A lost support foot only needs to reach its old support height; its ground is gone.
-    complete &= h.cursor == 0 && (footSensor_isTriggered(leg) || legs[leg].lost);
-  }
-  byte airborne = 0;
-  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-  {
-    if (histories[leg].needed)
-    {
-      airborne |= 1 << leg;
-    }
-  }
-  // After a support foot loses ground, the held feet are already the robot's only support; the
-  // retrace only lowers airborne feet back onto ground they left, so it must not wait on them.
-  if (!restoreForLoss && !footLanding_supportReady(airborne))
-  {
-    // Returning feet cannot supply the support needed to move themselves along the recorded path.
-    footLanding_fail("insufficient support during path recovery", NUM_OF_LEGS);
-    return;
-  }
-  if (complete)
-  {
-    for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
-    {
-      legs[leg].phase = SUPPORT;
-      legs[leg].offset = y[leg];
-      legs[leg].supported = footSensor_isTriggered(leg);
-      legs[leg].supportSearch = legs[leg].seating = legs[leg].releasePending = false;
-      legs[leg].lost &= !legs[leg].supported;
-    }
-    restoring = false;
-    restored = true;
-    Serial.println(
-        F("Recovery: returning feet contact and support confirmed; preparing opposite travel."));
-  }
-  else if (uint32_t(now - restoreStarted) >= 10000)
-  {
-    footLanding_fail("return-path contact timeout", NUM_OF_LEGS);
-    restoring = false;
-  }
 }

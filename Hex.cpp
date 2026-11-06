@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
+#include <limits.h>
 #include <Wire.h>
 
 #include "HexCfg.h"
@@ -21,6 +22,7 @@
 #include "footLanding.h"
 #include "webControl.h"
 #include <WiFi.h>
+#include <esp_system.h>
 
 #if defined(FOOT_SENSOR_WALK_ENABLED) && !defined(FOOT_SENSOR_ENABLED)
 #error "Contact-aware walking requires FOOT_SENSOR_ENABLED"
@@ -244,24 +246,44 @@ bool footWalkingEnabled;
 enum FootRecovery
 {
   RECOVERY_IDLE,
-  RECOVERY_RETRACE,
-  RECOVERY_REVERSE,
+  RECOVERY_RETREAT,
   RECOVERY_SETTLE,
   RECOVERY_WAIT_CENTER,
   RECOVERY_WAIT_INPUT,
   RECOVERY_HOLD,
-  // A support foot lost ground with the gait at rest: lift it and set it down again at home.
-  RECOVERY_REPLACE
+  // Place lost feet one at a time after a validated clearance lift.
+  RECOVERY_REPLACE,
+  RECOVERY_SHIFT,
+  RECOVERY_RECENTER,
+  RECOVERY_UNDO
 };
 FootRecovery footRecovery;
 byte replaceLeg = NUM_OF_LEGS;
-bool replaceLifted;
-// A failed re-place already caused one retreat; a second failure holds instead of looping.
-bool replaceRetreated;
+bool replaceLifted, replaceShifted;
+struct RecoveryMotion
+{
+  long shiftX, shiftZ; // Outstanding body translation encoded in planted GaitPos, not bodyPos.
+  long totalX, totalZ; // Actual translation including completed re-center cycles.
+  short shifted, walkRemaining;
+  byte stage, walkCycles, centerLeg, centerPhase, tuckMM;
+  byte placedMask; // Feet placed by recovery; final re-center moves them after every support.
+  bool retreat, walkPending, slideMoved, centerPlaced;
+};
+RecoveryMotion recoveryMotion;
+
+short replaceBaseX[NUM_OF_LEGS], replaceBaseZ[NUM_OF_LEGS];
+long recoveryFailedX[NUM_OF_LEGS], recoveryFailedZ[NUM_OF_LEGS];
+byte recoveryFailedCount, recoveryRememberedLegMask, recoveryBaseMask;
+uint32_t recoveryTriedDirections;
+byte recoveryDirectionIndex = 0xff;
+bool recoveryEpisodeActive;
+static const byte RECOVERY_MAX_DIRECTIONS = 8 + 2 * NUM_OF_LEGS;
+static const long RECOVERY_DIRECTION_SCALE = 1000;
+static long recoveryDirections[RECOVERY_MAX_DIRECTIONS][2];
+static byte recoveryDirectionCount;
 bool webArmed;
 bool webStopHold;
 bool webDisablePending;
-long recoveryTravelX, recoveryTravelZ, recoveryRotation;
 unsigned recoverySteps;
 bool footFallback, footSupportWaiting;
 // Joint-limit pause: last valid pose held, landing checks frozen until the operator changes input.
@@ -1224,11 +1246,10 @@ void updateCreepProfile()
   }
 }
 
-void walkingSupportGeometry(bool fromIK)
+void walkingFootGeometry(long x[], long z[], bool fromIK)
 {
   // Mirror right-side leg-local X into body coordinates; prefer the last IK footprint after body
   // corrections.
-  long x[NUM_OF_LEGS], z[NUM_OF_LEGS];
   for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
   {
     long localX = fromIK
@@ -1238,7 +1259,282 @@ void walkingSupportGeometry(bool fromIK)
     z[leg] = (short)pgm_read_word(&cOffsetZ[leg]) +
              (fromIK ? walkingIKZ[leg] : legPosZ[leg] + GaitPosZ[leg]);
   }
+}
+
+void walkingSupportGeometry(bool fromIK)
+{
+  long x[NUM_OF_LEGS], z[NUM_OF_LEGS];
+  walkingFootGeometry(x, z, fromIK);
   footLanding_supportGeometry(x, z);
+}
+
+void walkingRecoveryRememberSides(byte mask)
+{
+  long x[NUM_OF_LEGS], z[NUM_OF_LEGS];
+  walkingFootGeometry(x, z, false);
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    byte bit = 1 << leg;
+    if (!(mask & bit) || (recoveryRememberedLegMask & bit) ||
+        recoveryFailedCount >= NUM_OF_LEGS || (!x[leg] && !z[leg]))
+    {
+      continue;
+    }
+    recoveryFailedX[recoveryFailedCount] = x[leg];
+    recoveryFailedZ[recoveryFailedCount] = z[leg];
+    ++recoveryFailedCount;
+    recoveryRememberedLegMask |= bit;
+  }
+}
+
+byte walkingRecoveryChooseDirection()
+{
+  static const short base[8][2] = {
+      {-707, -707}, {0, -1000}, {707, -707}, {1000, 0},
+      {707, 707}, {0, 1000}, {-707, 707}, {-1000, 0}};
+  recoveryDirectionCount = 0;
+  for (byte direction = 0; direction < 8; ++direction)
+  {
+    recoveryDirections[recoveryDirectionCount][0] = base[direction][0];
+    recoveryDirections[recoveryDirectionCount++][1] = base[direction][1];
+  }
+  for (byte failed = 0; failed < recoveryFailedCount; ++failed)
+  {
+    long perpendicular[2][2] = {{-recoveryFailedZ[failed], recoveryFailedX[failed]},
+                                {recoveryFailedZ[failed], -recoveryFailedX[failed]}};
+    for (byte side = 0; side < 2; ++side)
+    {
+      long scale = _max(abs(perpendicular[side][0]), abs(perpendicular[side][1]));
+      if (!scale)
+      {
+        continue;
+      }
+      long x = perpendicular[side][0];
+      long z = perpendicular[side][1];
+      bool duplicate = false;
+      for (byte existing = 0; existing < recoveryDirectionCount; ++existing)
+      {
+        duplicate |= recoveryDirections[existing][0] == x &&
+                     recoveryDirections[existing][1] == z;
+      }
+      if (!duplicate && recoveryDirectionCount < RECOVERY_MAX_DIRECTIONS)
+      {
+        recoveryDirections[recoveryDirectionCount][0] = x;
+        recoveryDirections[recoveryDirectionCount++][1] = z;
+      }
+    }
+  }
+  byte best = 0xff;
+  long bestScore = LONG_MAX;
+  for (byte candidate = 0; candidate < recoveryDirectionCount; ++candidate)
+  {
+    if (recoveryTriedDirections & (uint32_t(1) << candidate))
+    {
+      continue;
+    }
+    long score = 0;
+    bool safeSide = true;
+    for (byte failed = 0; failed < recoveryFailedCount; ++failed)
+    {
+      long dot = recoveryDirections[candidate][0] * recoveryFailedX[failed] +
+                 recoveryDirections[candidate][1] * recoveryFailedZ[failed];
+      if (dot > 0)
+      {
+        safeSide = false;
+        break;
+      }
+      score += dot;
+    }
+    if (safeSide && score < bestScore)
+    {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+bool walkingRecoverySelectDirection()
+{
+  byte candidate = walkingRecoveryChooseDirection();
+  if (candidate == 0xff)
+  {
+    recoveryDirectionIndex = 0xff;
+    return false;
+  }
+  recoveryDirectionIndex = candidate;
+  return true;
+}
+
+bool walkingRecoveryDirectionAllowed(byte candidate)
+{
+  if (candidate >= recoveryDirectionCount ||
+      (recoveryTriedDirections & (uint32_t(1) << candidate)))
+  {
+    return false;
+  }
+  for (byte failed = 0; failed < recoveryFailedCount; ++failed)
+  {
+    if (recoveryDirections[candidate][0] * recoveryFailedX[failed] +
+            recoveryDirections[candidate][1] * recoveryFailedZ[failed] >
+        0)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+long walkingRecoveryComponent(byte candidate, byte axis, long distance)
+{
+  if (candidate >= recoveryDirectionCount || axis > 1) return 0;
+  long scale = _max(abs(recoveryDirections[candidate][0]),
+                    abs(recoveryDirections[candidate][1]));
+  return scale ? recoveryDirections[candidate][axis] * distance / scale : 0;
+}
+
+void doKinetic();
+
+bool walkingRecoveryPoseSafe(byte mask, bool support = false)
+{
+  short c[NUM_OF_LEGS], f[NUM_OF_LEGS], t[NUM_OF_LEGS];
+  long y[NUM_OF_LEGS], ix[NUM_OF_LEGS], iy[NUM_OF_LEGS], iz[NUM_OF_LEGS];
+  memcpy(c, coxaAngle, sizeof(c)); memcpy(f, femurAngle, sizeof(f));
+  memcpy(t, tibiaAngle, sizeof(t)); memcpy(y, GaitPosY, sizeof(y));
+  memcpy(ix, walkingIKX, sizeof(ix)); memcpy(iy, walkingIKY, sizeof(iy));
+  memcpy(iz, walkingIKZ, sizeof(iz));
+  bool targets = walkingFootTargets;
+  byte unreachable = walkingUnreachableLeg;
+  bool search = walkingUnreachableSearch;
+  walkingFootTargets = true; walkingUnreachableLeg = NUM_OF_LEGS;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    GaitPosY[leg] = footLanding_y(leg, GaitPosY[leg]);
+  doKinetic();
+  bool safe = true;
+  if (support)
+  {
+    walkingSupportGeometry(true);
+    safe = footLanding_supportReady(~mask);
+  }
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    if (!(mask & (1 << leg))) continue;
+    float femur = pgm_read_byte(&cFemurLength[leg]);
+    float tibia = pgm_read_byte(&cTibiaLength[leg]);
+    float distance = hypotf(hypotf(walkingIKX[leg], walkingIKZ[leg]) -
+                                pgm_read_byte(&cCoxaLength[leg]), walkingIKY[leg]);
+    safe &= walkingUnreachableLeg != leg && distance > fabsf(femur - tibia) + 5 &&
+            distance < femur + tibia - 5;
+    short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
+    const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
+    const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
+    const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+      safe &= angles[joint] > (short)pgm_read_word(&mins[joint][leg]) + 50 &&
+              angles[joint] < (short)pgm_read_word(&maxs[joint][leg]) - 50 &&
+              angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) > -850 &&
+              angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) < 850;
+  }
+  memcpy(coxaAngle, c, sizeof(c)); memcpy(femurAngle, f, sizeof(f));
+  memcpy(tibiaAngle, t, sizeof(t)); memcpy(GaitPosY, y, sizeof(y));
+  memcpy(walkingIKX, ix, sizeof(ix)); memcpy(walkingIKY, iy, sizeof(iy));
+  memcpy(walkingIKZ, iz, sizeof(iz));
+  walkingFootTargets = targets; walkingUnreachableLeg = unreachable;
+  walkingUnreachableSearch = search;
+  return safe;
+}
+
+bool walkingRecoveryLift(byte leg)
+{
+  if (leg >= NUM_OF_LEGS) return false;
+  long previous = GaitPosY[leg];
+  for (int lift = FOOT_RECOVERY_CLEARANCE_MM; lift >= FOOT_RECOVERY_CLEARANCE_MIN_MM;
+       lift -= FOOT_RECOVERY_CLEARANCE_STEP_DOWN_MM)
+  {
+    GaitPosY[leg] = -lift;
+    if (walkingRecoveryPoseSafe(1 << leg)) return true;
+  }
+  GaitPosY[leg] = previous;
+  Serial.println(F("Recovery: no safe clearance lift; escalating without moving foot."));
+  return false;
+}
+
+bool walkingRecoveryShift(long dx, long dz)
+{
+  long x[NUM_OF_LEGS], z[NUM_OF_LEGS];
+  memcpy(x, GaitPosX, sizeof(x)); memcpy(z, GaitPosZ, sizeof(z));
+  byte planted = 0;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    if (footSensor_isTriggered(leg) && GaitPosY[leg] >= 0 &&
+        !(footLanding_lostMask() & (1 << leg)))
+    {
+      planted |= 1 << leg;
+      GaitPosX[leg] -= dx; GaitPosZ[leg] -= dz;
+    }
+  walkingSupportGeometry(false);
+  bool safe = planted && walkingRecoveryPoseSafe(planted, true);
+  if (!safe)
+  {
+    memcpy(GaitPosX, x, sizeof(x)); memcpy(GaitPosZ, z, sizeof(z));
+    Serial.println(F("Recovery: body shift stopped at geometry/support limit."));
+  }
+  else
+  {
+    recoveryMotion.shiftX += dx; recoveryMotion.shiftZ += dz;
+    recoveryMotion.totalX += dx; recoveryMotion.totalZ += dz;
+    Serial.println(F("Recovery: exact body shift."));
+  }
+  walkingSupportGeometry(false);
+  return safe;
+}
+
+void walkingRecoveryCenter(bool retreat)
+{
+  recoveryMotion.retreat = retreat;
+  recoveryMotion.centerLeg = recoveryMotion.centerPhase = 0;
+  recoveryMotion.centerPlaced = false;
+  // Lifting clears the landing lost bit. Complete that held foot's contact search before
+  // lifting another support during no-lost-foot completion (not another placement attempt).
+  if (retreat && replaceLeg < NUM_OF_LEGS && !footSensor_isTriggered(replaceLeg) &&
+      GaitPosY[replaceLeg] < 0)
+  {
+    recoveryMotion.centerLeg = replaceLeg;
+    recoveryMotion.centerPhase = 4;
+    recoveryMotion.placedMask |= 1 << replaceLeg;
+  }
+  footRecovery = RECOVERY_RECENTER;
+  Serial.println(F("Recovery: sequential support re-center."));
+}
+
+void walkingRecoveryNextDirection()
+{
+  if (footRecovery == RECOVERY_RECENTER && recoveryMotion.retreat && !footLanding_lostMask() &&
+      (replaceLeg >= NUM_OF_LEGS || footSensor_isTriggered(replaceLeg)))
+  {
+    footRecovery = RECOVERY_HOLD;
+    Serial.println(F("Recovery HOLD: neutral re-center blocked by geometry/support limit."));
+    return;
+  }
+  if (recoveryDirectionIndex < recoveryDirectionCount)
+    recoveryTriedDirections |= uint32_t(1) << recoveryDirectionIndex;
+  footRecovery = RECOVERY_UNDO;
+  Serial.println(F("Recovery: direction exhausted; checked shift undo."));
+}
+
+void walkingRecoveryEscalate()
+{
+#if BUILDCFG_RECOVERY_WALK_AWAY_ENABLED
+  if (recoveryMotion.walkCycles < FOOT_RECOVERY_WALK_STEPS)
+  {
+    ++recoveryMotion.walkCycles;
+    recoveryMotion.walkPending = true;
+    // A held clearance/tuck survives walk-away cycles; never tuck another 15 mm.
+    footRecovery = RECOVERY_SHIFT;
+    Serial.println(F("Recovery Step C: bounded walk-away cycle."));
+    return;
+  }
+#endif
+  walkingRecoveryNextDirection();
 }
 
 void walkingRestoreGait()
@@ -1284,7 +1580,6 @@ bool walkingEnableSensors()
   footSensorBypass = footBypassAwaitInput = false;
   footWalkingEnabled = true;
   footRecovery = RECOVERY_IDLE;
-  replaceRetreated = false;
   return true;
 }
 
@@ -1319,9 +1614,6 @@ bool walkingCancelSensors()
   footWalkingEnabled = false;
   footLanding_init();
   footRecovery = RECOVERY_IDLE;
-  replaceRetreated = false;
-  recoveryTravelX = recoveryTravelZ = recoveryRotation = 0;
-  recoverySteps = 0;
   footSupportWaiting = false;
   walkingPaused = false;
   walkingPauseReason[0] = 0;
@@ -1378,12 +1670,16 @@ bool walkingPlanStep()
     }
     footLanding_plan(y, GaitPosY, servoMoveTime);
   }
+#if BUILDCFG_SLOW_WAVE_FALLBACK_ENABLED
   else if (!footFallback)
   {
     // Switch only between swings; one-foot wave lifts can retain support that a tripod lift would
     // remove.
-    footRequestedGait = GaitType;
-    footRequestedLift = LegLiftHeight;
+    if (!footFallback)
+    {
+      footRequestedGait = GaitType;
+      footRequestedLift = LegLiftHeight;
+    }
     footFallback = true;
     GaitType = 4; // Wave 24: one swing leg at a time.
     LegLiftHeight = _min(LegLiftHeight, FALLBACK_LEG_LIFT_MM);
@@ -1402,6 +1698,7 @@ bool walkingPlanStep()
     }
     Serial.println(F("Support-aware fallback: slow wave, small translation, no turning."));
   }
+#endif
   if (!footSupportWaiting)
   {
     Serial.println(
@@ -1413,7 +1710,12 @@ bool walkingPlanStep()
 
 void walkingStartReplace()
 {
+  byte previousLeg = replaceLeg;
+  byte previousTuck = recoveryMotion.tuckMM;
   byte lost = footLanding_lostMask();
+  // Lifting clears footLanding's lost bit; the active, still-airborne foot remains ours.
+  if (replaceLeg < NUM_OF_LEGS && !footSensor_isTriggered(replaceLeg))
+    lost |= 1 << replaceLeg;
   replaceLeg = NUM_OF_LEGS;
   for (byte leg = 0; leg < NUM_OF_LEGS && replaceLeg == NUM_OF_LEGS; ++leg)
   {
@@ -1423,11 +1725,32 @@ void walkingStartReplace()
     }
   }
   replaceLifted = false;
+  replaceShifted = false;
+  recoveryMotion.slideMoved = false;
+  // A new lift after a failed slide probe does not grant another 15 mm tuck in this direction.
+  recoveryMotion.tuckMM = previousLeg < NUM_OF_LEGS && replaceLeg == previousLeg &&
+                          recoveryMotion.stage ? previousTuck : 0;
   footRecovery = RECOVERY_REPLACE;
+  ForceGaitStepCnt = 0;
   TravelLengthX = TravelLengthZ = TravelRotationY = 0;
   if (replaceLeg < NUM_OF_LEGS)
   {
-    Serial.println(F("Recovery: lifting the lost foot and setting it down again."));
+    byte bit = 1 << replaceLeg;
+    if (!(recoveryBaseMask & bit))
+    {
+      replaceBaseX[replaceLeg] = GaitPosX[replaceLeg];
+      replaceBaseZ[replaceLeg] = GaitPosZ[replaceLeg];
+      recoveryBaseMask |= bit;
+    }
+    if (recoveryDirectionIndex >= recoveryDirectionCount && !walkingRecoverySelectDirection())
+    {
+      footRecovery = RECOVERY_HOLD;
+      Serial.println(F("Recovery HOLD: no untried direction avoids every failed side."));
+      return;
+    }
+    Serial.println(recoveryMotion.stage
+                       ? F("Recovery: shifted-body clearance and contact placement.")
+                       : F("Recovery Step A: clearance lift and inward contact placement."));
   }
 }
 
@@ -2081,7 +2404,7 @@ void setup()
   //  after motor init to calibrate the sensor
 
   currentState = STATE_IDLE;
-#ifndef BUILDCFG_BUZZER_AFTER_INIT_DISABLED
+#ifdef BUILDCFG_BUZZER_AFTER_INIT_ENABLED
   buzzer_toggle(3, 200, 100);
 #endif
   digitalWrite(LED_RED_GPIO, HIGH);
@@ -2151,94 +2474,75 @@ void contactWalking()
   }
   if (footLanding_fault())
   {
-    // Retreat only for missing ground (landing foot, or support foot past a table edge while
-    // walking), with support checks; a new retreat fault stays in HOLD.
-    bool walking = TravelLengthX || TravelLengthZ || TravelRotationY || ForceGaitStepCnt;
-    for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    if (!footLanding_hardFault() && footLanding_timedOut())
     {
-      walking |= abs(GaitPosX[leg]) > cGPlimit || GaitPosY[leg] != 0 ||
-                 abs(GaitPosZ[leg]) > cGPlimit || abs(GaitRotY[leg]) > cGPlimit;
-    }
-    if ((footRecovery == RECOVERY_IDLE || footRecovery == RECOVERY_SETTLE) && !walking &&
-        footLanding_timedOut() && footLanding_supportLost())
-    {
-      // Gait at rest: retract the lost foot, then set it down again instead of holding.
-      if (footLanding_retry() && footLanding_lostMask())
+      byte failed = footLanding_recoveryMask();
+      if (!recoveryEpisodeActive)
       {
+        recoveryFailedCount = recoveryRememberedLegMask = recoveryTriedDirections = recoveryBaseMask = 0;
+        recoveryDirectionIndex = 0xff;
+        recoveryEpisodeActive = true;
+        recoveryMotion = {};
+      }
+      byte remembered = recoveryRememberedLegMask;
+      walkingRecoveryRememberSides(failed);
+      walkingRecoveryChooseDirection(); // Refresh dynamic perpendicular candidates after new losses.
+      bool sameDirection = walkingRecoveryDirectionAllowed(recoveryDirectionIndex);
+      if (footRecovery == RECOVERY_REPLACE && replaceLeg < NUM_OF_LEGS && sameDirection)
+      {
+        if (recoveryMotion.stage == 0)
+        {
+          recoveryMotion.stage = 1;
+          footRecovery = RECOVERY_SHIFT;
+          Serial.println(F("Recovery Step B: tuck and slide before contact search."));
+        }
+        else walkingRecoveryEscalate();
+      }
+      else if (footRecovery == RECOVERY_RECENTER && (failed & remembered) && sameDirection)
+      {
+        // Placement succeeded here before, but the neutral foot still overhangs the edge.
+        // Do not loop forever between that same placement and the same failed re-center.
+        recoveryMotion.stage = 1;
+        // Supports were re-centered before this recovered foot, so the shift budget is fresh.
+        recoveryMotion.shifted = recoveryMotion.walkRemaining = 0;
+        recoveryMotion.tuckMM = 0;
+        recoveryMotion.slideMoved = false;
+        footRecovery = RECOVERY_SHIFT;
+        Serial.println(F("Recovery: neutral stance still lacks ground; shift further."));
+      }
+      else
+      {
+        recoveryMotion.stage = 0;
+        recoveryMotion.shifted = recoveryMotion.walkRemaining = 0;
+        recoveryMotion.walkCycles = 0;
+        recoveryDirectionIndex = 0xff;
+      }
+      walkingSupportGeometry(false);
+      if (footLanding_supportReady() && footLanding_startRecovery() &&
+          (walkingRecoveryDirectionAllowed(recoveryDirectionIndex) || walkingRecoverySelectDirection()))
+      {
+        FootRecovery phase = footRecovery;
         walkingStartReplace();
+        if (phase == RECOVERY_SHIFT || phase == RECOVERY_UNDO) footRecovery = phase;
       }
       else
       {
         footRecovery = RECOVERY_HOLD;
-        Serial.println(F("Lost foot cannot be re-placed. HOLD; secure robot and restart."));
+        Serial.println(F("Recovery HOLD: no remaining supported direction or safe contact search."));
       }
-    }
-    else if (footRecovery == RECOVERY_REPLACE && footLanding_timedOut() &&
-             !footLanding_supportLost() && !replaceRetreated &&
-             (recoveryTravelX || recoveryTravelZ || recoveryRotation))
-    {
-      // The re-placed foot found no ground either: walk back once, then re-check all feet.
-      footLanding_abandon(replaceLeg);
-      if (footLanding_retry())
-      {
-        replaceRetreated = true;
-        footRecovery = RECOVERY_REVERSE;
-        recoverySteps = 0;
-        Serial.println(F("Re-placed foot found no ground; reversing last travel."));
-      }
-      else
-      {
-        footRecovery = RECOVERY_HOLD;
-        Serial.println(F("Opposite travel blocked: support unavailable. HOLD; secure robot and restart."));
-      }
-    }
-    else if (footRecovery == RECOVERY_IDLE && footLanding_timedOut() &&
-        (!footLanding_supportLost() || walking) &&
-        (recoveryTravelX || recoveryTravelZ || recoveryRotation))
-    {
-      if (footLanding_beginRestore())
-      {
-        footRecovery = RECOVERY_RETRACE;
-      }
-      else if (footLanding_allSupported())
-      {
-        footLanding_retry();
-        footRecovery = RECOVERY_REVERSE;
-        recoverySteps = 0;
-      }
-      else
-      {
-        footRecovery = RECOVERY_HOLD;
-        Serial.println(
-            F("Opposite travel blocked: support unavailable. HOLD; secure robot and restart."));
-      }
-    }
-    else if (footRecovery == RECOVERY_RETRACE && footLanding_allSupported())
-    {
-      footLanding_retry();
-      footRecovery = RECOVERY_REVERSE;
-      recoverySteps = 0;
     }
     else
     {
       footRecovery = RECOVERY_HOLD;
-      Serial.println(F("Recovery blocked by fault. HOLD; secure robot and restart."));
+      Serial.println(F("Recovery blocked by hard fault or non-recoverable sensor fault. HOLD."));
     }
-    if (footLanding_fault())
-    {
-      return;
-    }
+    return;
   }
-  if (footRecovery == RECOVERY_REVERSE)
-  {
-    TravelLengthX = -recoveryTravelX;
-    TravelLengthZ = -recoveryTravelZ;
-    TravelRotationY = -recoveryRotation;
-  }
-  else if (footRecovery == RECOVERY_SETTLE || footRecovery == RECOVERY_REPLACE)
-  {
+  bool recoveryPrimitive = footRecovery == RECOVERY_RETREAT ||
+      footRecovery == RECOVERY_SHIFT || footRecovery == RECOVERY_RECENTER ||
+      footRecovery == RECOVERY_UNDO;
+  if (recoveryPrimitive || footRecovery == RECOVERY_SETTLE || footRecovery == RECOVERY_REPLACE)
     TravelLengthX = TravelLengthZ = TravelRotationY = 0;
-  }
   if (!footLanding_engaged() && CHexInitY + bodyPosY <= CHexInitY &&
       abs(TravelLengthX) <= cTravelDeadZone && abs(TravelLengthZ) <= cTravelDeadZone &&
       abs(TravelRotationY) <= cTravelDeadZone)
@@ -2263,14 +2567,16 @@ void contactWalking()
   }
   bool stepping = abs(TravelLengthX) > cTravelDeadZone || abs(TravelLengthZ) > cTravelDeadZone ||
                   abs(TravelRotationY) > cTravelDeadZone || gaitDisplaced || ForceGaitStepCnt;
-  servoMoveTime = stepping ? NomGaitSpeed + InputTimeDelay * 2 + SpeedControl +
+  bool recoveryPlacement = footRecovery == RECOVERY_REPLACE && recoveryMotion.stage != 0;
+  servoMoveTime = (stepping || recoveryPrimitive || recoveryPlacement) ? NomGaitSpeed + InputTimeDelay * 2 + SpeedControl +
                                  (bBalanceMode ? BALANCE_DELAY : 0)
                            : 50 + SpeedControl;
-  if (creepActive)
+  if (creepActive && !recoveryPrimitive && !recoveryPlacement)
   {
     servoMoveTime = _max(servoMoveTime, CREEP_STEP_MS);
   }
-  if (footFallback || footRecovery == RECOVERY_REPLACE)
+  if (!recoveryPrimitive && !recoveryPlacement &&
+      (footFallback || footRecovery == RECOVERY_REPLACE))
   {
     servoMoveTime = _max(servoMoveTime, FOOT_WALK_FALLBACK_STEP_MS);
   }
@@ -2307,8 +2613,13 @@ void contactWalking()
     byte step, force, request, last, gait;
     short lift;
     bool fallback;
+    bool replaceLifted, replaceShifted;
     FootRecovery recovery;
     unsigned recoverySteps;
+    RecoveryMotion motion;
+    byte replaceLeg, direction, baseMask;
+    uint32_t triedDirections;
+    short baseX[NUM_OF_LEGS], baseZ[NUM_OF_LEGS];
   } saved;
   memcpy(saved.x, GaitPosX, sizeof(saved.x));
   memcpy(saved.y, GaitPosY, sizeof(saved.y));
@@ -2330,8 +2641,17 @@ void contactWalking()
   saved.gait = GaitType;
   saved.lift = LegLiftHeight;
   saved.fallback = footFallback;
+  saved.replaceLifted = replaceLifted;
+  saved.replaceShifted = replaceShifted;
   saved.recovery = footRecovery;
   saved.recoverySteps = recoverySteps;
+  saved.motion = recoveryMotion;
+  saved.replaceLeg = replaceLeg;
+  saved.direction = recoveryDirectionIndex;
+  saved.triedDirections = recoveryTriedDirections;
+  saved.baseMask = recoveryBaseMask;
+  memcpy(saved.baseX, replaceBaseX, sizeof(saved.baseX));
+  memcpy(saved.baseZ, replaceBaseZ, sizeof(saved.baseZ));
   footLanding_save();
   bool supportReady = true;
   // Advance landing coordinates only when an output frame will be issued.
@@ -2366,28 +2686,310 @@ void contactWalking()
     walkingStartReplace(); // Previous foot is down; continue with the next lost foot, if any.
     if (replaceLeg >= NUM_OF_LEGS)
     {
-      footRecovery = RECOVERY_SETTLE; // Nothing lost any more; re-check all feet.
+      footRecovery = RECOVERY_RETREAT;
+      recoverySteps = 0;
+      Serial.println(F("Recovery: exact retreat, then neutral stance."));
     }
   }
-  if (footRecovery == RECOVERY_REPLACE && !footLanding_busy() &&
+  if ((footRecovery == RECOVERY_SHIFT || footRecovery == RECOVERY_REPLACE) &&
+      replaceLeg >= NUM_OF_LEGS)
+  {
+    if (!footLanding_lostMask()) walkingRecoveryCenter(true);
+    else
+    {
+      footRecovery = RECOVERY_HOLD;
+      Serial.println(F("Recovery HOLD: invalid lost-foot index."));
+    }
+  }
+  if ((footRecovery == RECOVERY_SHIFT || footRecovery == RECOVERY_REPLACE ||
+       footRecovery == RECOVERY_RETREAT) &&
+      (recoveryDirectionIndex >= recoveryDirectionCount ||
+       (!recoveryDirections[recoveryDirectionIndex][0] &&
+        !recoveryDirections[recoveryDirectionIndex][1])))
+  {
+    if (!footLanding_lostMask()) walkingRecoveryCenter(true);
+    else
+    {
+      footRecovery = RECOVERY_HOLD;
+      Serial.println(F("Recovery HOLD: invalid recovery direction."));
+    }
+  }
+  recoveryPrimitive = footRecovery == RECOVERY_RETREAT || footRecovery == RECOVERY_SHIFT ||
+                      footRecovery == RECOVERY_RECENTER || footRecovery == RECOVERY_UNDO;
+  // Placement can enter retreat in this frame, after Step A applied its 400 ms floor.
+  if (recoveryPrimitive)
+    servoMoveTime = NomGaitSpeed + InputTimeDelay * 2 + SpeedControl +
+                    (bBalanceMode ? BALANCE_DELAY : 0);
+  if (recoveryPrimitive && !footLanding_busy() &&
       uint32_t(now - lastStep) >= stepDuration && servoTargetsReady())
   {
-    // Lift the lost foot, then lower it at its current (home) spot with the normal landing search.
+    long previousY[NUM_OF_LEGS];
+    memcpy(previousY, GaitPosY, sizeof(previousY));
+    if (footRecovery == RECOVERY_SHIFT)
+    {
+      if (!replaceLifted)
+      {
+        if (walkingRecoveryLift(replaceLeg))
+        {
+          replaceLifted = stepAttempted = true;
+        }
+        else walkingRecoveryEscalate();
+      }
+      else if (!replaceShifted)
+      {
+        // One bounded radial increment per servo move; slide only after tucking finishes.
+        long startX = GaitPosX[replaceLeg], startZ = GaitPosZ[replaceLeg];
+        long localX = legPosX[replaceLeg] +
+            (replaceLeg < NUM_LEGS_PER_SIDE ? -startX : startX);
+        long localZ = legPosZ[replaceLeg] + startZ;
+        float radius = hypotf(localX, localZ);
+        if (recoveryMotion.tuckMM + FOOT_RECOVERY_TUCK_STEP_MM <= FOOT_RECOVERY_TUCK_MAX_MM &&
+            radius > FOOT_RECOVERY_TUCK_STEP_MM)
+        {
+          GaitPosX[replaceLeg] += long(lroundf(localX * FOOT_RECOVERY_TUCK_STEP_MM / radius)) *
+              (replaceLeg < NUM_LEGS_PER_SIDE ? 1 : -1);
+          GaitPosZ[replaceLeg] -= long(lroundf(localZ * FOOT_RECOVERY_TUCK_STEP_MM / radius));
+          if (walkingRecoveryPoseSafe(1 << replaceLeg))
+          {
+            recoveryMotion.tuckMM += FOOT_RECOVERY_TUCK_STEP_MM;
+            stepAttempted = true;
+            Serial.println(F("Recovery: lost foot tucked one increment toward hip."));
+          }
+          else
+          {
+            GaitPosX[replaceLeg] = startX; GaitPosZ[replaceLeg] = startZ;
+            replaceShifted = true;
+          }
+        }
+        else replaceShifted = true;
+        if (recoveryMotion.tuckMM >= FOOT_RECOVERY_TUCK_MAX_MM) replaceShifted = true;
+      }
+      else if (recoveryMotion.walkPending)
+      {
+        recoveryMotion.walkPending = false;
+        walkingRecoveryCenter(false);
+      }
+      else
+      {
+        int distance = recoveryMotion.walkRemaining ?
+            _min(FOOT_RECOVERY_SHIFT_STEP_MM, recoveryMotion.walkRemaining) :
+            _min(FOOT_RECOVERY_SHIFT_STEP_MM,
+                 FOOT_RECOVERY_SHIFT_MAX_MM - recoveryMotion.shifted);
+        // Round endpoints, not increments: diagonal error must not accumulate.
+        int target = recoveryMotion.shifted + distance;
+        float norm = hypotf(recoveryDirections[recoveryDirectionIndex][0],
+                            recoveryDirections[recoveryDirectionIndex][1]);
+        long dx = lroundf(recoveryDirections[recoveryDirectionIndex][0] * target / norm) -
+                  lroundf(recoveryDirections[recoveryDirectionIndex][0] * recoveryMotion.shifted / norm);
+        long dz = lroundf(recoveryDirections[recoveryDirectionIndex][1] * target / norm) -
+                  lroundf(recoveryDirections[recoveryDirectionIndex][1] * recoveryMotion.shifted / norm);
+        if (distance > 0 && walkingRecoveryShift(dx, dz))
+        {
+          recoveryMotion.shifted += distance;
+          recoveryMotion.slideMoved = true;
+          stepAttempted = true;
+          if (recoveryMotion.walkRemaining)
+          {
+            recoveryMotion.walkRemaining -= distance;
+            if (!recoveryMotion.walkRemaining) footRecovery = RECOVERY_REPLACE;
+          }
+          else if (recoveryMotion.shifted >= FOOT_RECOVERY_SHIFT_MAX_MM)
+            footRecovery = RECOVERY_REPLACE;
+        }
+        else
+        {
+          if (recoveryMotion.slideMoved)
+          {
+            recoveryMotion.walkRemaining = 0;
+            footRecovery = RECOVERY_REPLACE;
+          }
+          else walkingRecoveryEscalate();
+        }
+      }
+    }
+    else if (footRecovery == RECOVERY_UNDO)
+    {
+      if (recoveryMotion.shiftX || recoveryMotion.shiftZ)
+        stepAttempted = walkingRecoveryShift(-recoveryMotion.shiftX, -recoveryMotion.shiftZ);
+      recoveryMotion.walkPending = false;
+      recoveryMotion.stage = recoveryMotion.walkCycles = 0;
+      recoveryMotion.shifted = recoveryMotion.walkRemaining = 0;
+      if (!footLanding_lostMask()) walkingRecoveryCenter(true);
+      else if (walkingRecoverySelectDirection()) walkingStartReplace();
+      else
+      {
+        footRecovery = RECOVERY_HOLD;
+        Serial.println(F("Recovery HOLD: no untried direction avoids every failed side."));
+      }
+    }
+    else if (footRecovery == RECOVERY_RETREAT)
+    {
+      float norm = hypotf(recoveryDirections[recoveryDirectionIndex][0],
+                          recoveryDirections[recoveryDirectionIndex][1]);
+      float ux = recoveryDirections[recoveryDirectionIndex][0] / norm;
+      float uz = recoveryDirections[recoveryDirectionIndex][1] / norm;
+      float remaining = FOOT_RECOVERY_RETREAT_MM -
+                        (recoveryMotion.totalX * ux + recoveryMotion.totalZ * uz);
+      if (remaining > 0.001f)
+      {
+        long dx = lroundf(ux * remaining), dz = lroundf(uz * remaining);
+        if (dx * ux + dz * uz < remaining)
+        {
+          if (fabsf(ux) >= fabsf(uz)) dx += ux > 0 ? 1 : -1;
+          else dz += uz > 0 ? 1 : -1;
+        }
+        if (walkingRecoveryShift(dx, dz)) stepAttempted = true;
+        else
+        {
+          if (!footLanding_lostMask()) walkingRecoveryCenter(true);
+          else walkingRecoveryNextDirection();
+        }
+      }
+      else walkingRecoveryCenter(true);
+    }
+    else if (footRecovery == RECOVERY_RECENTER)
+    {
+      byte &leg = recoveryMotion.centerLeg;
+      // Final re-center keeps the retreat body pose: supports first, recovered feet last.
+      byte deferred = recoveryMotion.retreat ? recoveryMotion.placedMask : 0;
+      while (true)
+      {
+        while (leg < NUM_OF_LEGS && ((footLanding_lostMask() & (1 << leg)) ||
+               (!recoveryMotion.retreat && leg == replaceLeg) ||
+               (recoveryMotion.centerPhase < 4 &&
+                bool(deferred & (1 << leg)) != recoveryMotion.centerPlaced))) ++leg;
+        if (leg < NUM_OF_LEGS || recoveryMotion.centerPlaced || !deferred) break;
+        recoveryMotion.centerPlaced = true;
+        leg = 0;
+      }
+      if (recoveryMotion.centerPhase == 4 && leg < NUM_OF_LEGS)
+      {
+        GaitPosY[leg] = 0;
+        recoveryMotion.centerPhase = 5; stepAttempted = true;
+      }
+      else if (recoveryMotion.centerPhase == 5 && leg < NUM_OF_LEGS)
+      {
+        if (footSensor_isTriggered(leg))
+          recoveryMotion.centerLeg = recoveryMotion.centerPhase = 0;
+      }
+      else if (leg >= NUM_OF_LEGS)
+      {
+        recoveryMotion.shiftX = recoveryMotion.shiftZ = 0;
+        if (recoveryMotion.retreat)
+        {
+          footRecovery = RECOVERY_SETTLE;
+          Serial.println(F("Recovery retreat complete; neutral stance, settling contacts."));
+        }
+        else
+        {
+          recoveryMotion.slideMoved = false;
+          recoveryMotion.walkRemaining = FOOT_RECOVERY_WALK_STEP_MM;
+          footRecovery = RECOVERY_SHIFT;
+          replaceLifted = replaceShifted = true;
+        }
+      }
+      else if (recoveryMotion.centerPhase == 0)
+      {
+        bool lifted = false;
+        long x = GaitPosX[leg], z = GaitPosZ[leg], rotation = GaitRotY[leg];
+        for (int lift = FOOT_RECOVERY_CLEARANCE_MM; !lifted && lift >= FOOT_RECOVERY_CLEARANCE_MIN_MM;
+             lift -= FOOT_RECOVERY_CLEARANCE_STEP_DOWN_MM)
+        {
+          GaitPosY[leg] = -lift;
+          if (!footLanding_liftReady(GaitPosY) || !walkingRecoveryPoseSafe(1 << leg)) continue;
+          // The neutral move happens at this lift, so it must also be reachable here.
+          GaitPosX[leg] = GaitPosZ[leg] = GaitRotY[leg] = 0;
+          lifted = walkingRecoveryPoseSafe(1 << leg);
+          GaitPosX[leg] = x; GaitPosZ[leg] = z; GaitRotY[leg] = rotation;
+        }
+        if (lifted)
+        {
+          walkingRecoveryPoseSafe(1 << leg); // Refresh cached IK for the lift pose.
+          recoveryMotion.centerPhase = 1; stepAttempted = true;
+        }
+        else
+        {
+          GaitPosY[leg] = previousY[leg];
+          walkingRecoveryNextDirection();
+        }
+      }
+      else if (recoveryMotion.centerPhase == 1)
+      {
+        long x = GaitPosX[leg], z = GaitPosZ[leg], rotation = GaitRotY[leg];
+        GaitPosX[leg] = GaitPosZ[leg] = GaitRotY[leg] = 0;
+        if (walkingRecoveryPoseSafe(1 << leg))
+        {
+          recoveryMotion.centerPhase = 2; stepAttempted = true;
+        }
+        else
+        {
+          GaitPosX[leg] = x; GaitPosZ[leg] = z; GaitRotY[leg] = rotation;
+          walkingRecoveryNextDirection();
+        }
+      }
+      else if (recoveryMotion.centerPhase == 2)
+      {
+        GaitPosY[leg] = 0;
+        recoveryMotion.centerPhase = 3; stepAttempted = true;
+      }
+      else if (footSensor_isTriggered(leg))
+      {
+        ++leg; recoveryMotion.centerPhase = 0;
+      }
+    }
+    if (stepAttempted)
+    {
+      memcpy(stepStartX, GaitPosX, sizeof(stepStartX));
+      memcpy(stepStartZ, GaitPosZ, sizeof(stepStartZ));
+      memcpy(stepStartRotation, GaitRotY, sizeof(stepStartRotation));
+      footLanding_plan(previousY, GaitPosY, servoMoveTime, (1000U + PWM_FREQ - 1) / PWM_FREQ);
+      footLanding_update();
+      ++recoverySteps;
+    }
+  }
+  if (!stepAttempted && footRecovery == RECOVERY_REPLACE && !footLanding_busy() &&
+      uint32_t(now - lastStep) >= stepDuration && servoTargetsReady())
+  {
+    // Lift, shift inward while clear, then lower with the ordinary bounded contact search.
     long previousY[NUM_OF_LEGS];
     memcpy(previousY, GaitPosY, sizeof(previousY));
     if (!replaceLifted && supportReady)
     {
-      GaitPosY[replaceLeg] = -_min(LegLiftHeight, FALLBACK_LEG_LIFT_MM);
-      replaceLifted = stepAttempted = true;
+      if (walkingRecoveryLift(replaceLeg)) replaceLifted = stepAttempted = true;
+      else
+      {
+        recoveryMotion.stage = 1;
+        footRecovery = RECOVERY_SHIFT;
+      }
     }
-    else if (replaceLifted && GaitPosY[replaceLeg] < 0)
+    else if (replaceLifted && !replaceShifted)
+    {
+      GaitPosX[replaceLeg] =
+          replaceBaseX[replaceLeg] +
+          walkingRecoveryComponent(recoveryDirectionIndex, 0, FOOT_RECOVERY_PLACE_MM);
+      GaitPosZ[replaceLeg] =
+          replaceBaseZ[replaceLeg] +
+          walkingRecoveryComponent(recoveryDirectionIndex, 1, FOOT_RECOVERY_PLACE_MM);
+      if (walkingRecoveryPoseSafe(1 << replaceLeg)) replaceShifted = stepAttempted = true;
+      else
+      {
+        GaitPosX[replaceLeg] = saved.x[replaceLeg];
+        GaitPosZ[replaceLeg] = saved.z[replaceLeg];
+        recoveryMotion.stage = 1;
+        recoveryMotion.tuckMM = 0;
+        footRecovery = RECOVERY_SHIFT;
+      }
+    }
+    else if (replaceLifted && replaceShifted && GaitPosY[replaceLeg] < 0)
     {
       GaitPosY[replaceLeg] = 0;
       stepAttempted = true;
     }
-    else if (replaceLifted)
+    else if (replaceLifted && replaceShifted && footSensor_isTriggered(replaceLeg))
     {
-      replaceLeg = NUM_OF_LEGS; // Landed with contact; a failed search faults instead.
+      recoveryMotion.placedMask |= 1 << replaceLeg;
+      replaceLeg = NUM_OF_LEGS;
+      replaceLifted = replaceShifted = false;
     }
     if (stepAttempted)
     {
@@ -2399,7 +3001,11 @@ void contactWalking()
       footLanding_update();
     }
   }
-  if (supportReady && footRecovery != RECOVERY_RETRACE && footRecovery != RECOVERY_REPLACE &&
+  // Phase changes (including HOLD after a checked undo) must keep gait/balance frozen this frame.
+  recoveryPrimitive = footRecovery == RECOVERY_RETREAT || footRecovery == RECOVERY_SHIFT ||
+                      footRecovery == RECOVERY_RECENTER || footRecovery == RECOVERY_UNDO ||
+                      footRecovery == RECOVERY_HOLD;
+  if (supportReady && !recoveryPrimitive && footRecovery != RECOVERY_REPLACE &&
       !footLanding_busy() && stepping &&
       uint32_t(now - lastStep) >= stepDuration && servoTargetsReady())
   {
@@ -2409,12 +3015,6 @@ void contactWalking()
     memcpy(previousX, GaitPosX, sizeof(previousX));
     memcpy(previousZ, GaitPosZ, sizeof(previousZ));
     memcpy(previousRotation, GaitRotY, sizeof(previousRotation));
-    if (footRecovery == RECOVERY_IDLE && (TravelLengthX || TravelLengthZ || TravelRotationY))
-    {
-      recoveryTravelX = TravelLengthX;
-      recoveryTravelZ = TravelLengthZ;
-      recoveryRotation = TravelRotationY;
-    }
     bool advanced = walkingPlanStep();
     if (advanced)
     {
@@ -2428,15 +3028,6 @@ void contactWalking()
       uint32_t firstFrameMs = (1000U + PWM_FREQ - 1) / PWM_FREQ;
       footLanding_plan(previousY, GaitPosY, servoMoveTime, firstFrameMs);
       footLanding_update();
-    }
-    if (advanced && footRecovery == RECOVERY_REVERSE && ++recoverySteps >= 3U * StepsInGait)
-    {
-      // Count accepted gait steps, not blocked attempts; stop after three requested reverse
-      // periods.
-      footRecovery = RECOVERY_SETTLE;
-      TravelLengthX = TravelLengthZ = TravelRotationY = 0;
-      Serial.println(
-          F("Three reverse gait cycles requested; finishing pending contact and settling."));
     }
     stepAttempted = true;
   }
@@ -2453,27 +3044,11 @@ void contactWalking()
     GaitPosY[leg] = footSensorBypass ? plannedY[leg] + footBypassOffset[leg]
                                      : footLanding_y(leg, plannedY[leg]);
   }
-  if (footRecovery == RECOVERY_RETRACE)
-  {
-    footLanding_restoreTargets(GaitPosX, GaitPosY, GaitPosZ, GaitRotY);
-    if (footLanding_fault())
-    {
-      memcpy(GaitPosY, plannedY, sizeof(plannedY));
-      return;
-    }
-    if (footLanding_restored())
-    {
-      footRecovery = RECOVERY_REVERSE;
-      recoverySteps = 0;
-      // The restored Y coordinates now live in per-foot support offsets.
-      memset(plannedY, 0, sizeof(plannedY));
-    }
-  }
   // Freeze body corrections during landing/recovery/bypass so they cannot undo a latched contact
   // target.
-  if (!footSensorBypass && !footLanding_busy() && footRecovery != RECOVERY_RETRACE &&
-      footRecovery != RECOVERY_REVERSE && footRecovery != RECOVERY_SETTLE &&
-      footRecovery != RECOVERY_REPLACE)
+  if (!footSensorBypass && !footLanding_busy() && footRecovery != RECOVERY_RETREAT &&
+      footRecovery != RECOVERY_SETTLE &&
+      footRecovery != RECOVERY_REPLACE && !recoveryPrimitive)
   {
     TotalTransX = TotalTransY = TotalTransZ = 0;
     TotalXBal1 = TotalYBal1 = TotalZBal1 = 0;
@@ -2484,7 +3059,7 @@ void contactWalking()
   memcpy(plannedX, GaitPosX, sizeof(plannedX));
   memcpy(plannedZ, GaitPosZ, sizeof(plannedZ));
   memcpy(plannedRotation, GaitRotY, sizeof(plannedRotation));
-  if (!footSensorBypass && footRecovery != RECOVERY_RETRACE)
+  if (!footSensorBypass)
   {
     for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
     {
@@ -2553,6 +3128,8 @@ void contactWalking()
     LastLeg = saved.last;
     LegLiftHeight = saved.lift;
     footFallback = saved.fallback;
+    replaceLifted = saved.replaceLifted;
+    replaceShifted = saved.replaceShifted;
     if (GaitType != saved.gait)
     {
       GaitType = saved.gait;
@@ -2561,12 +3138,21 @@ void contactWalking()
     }
     footRecovery = saved.recovery;
     recoverySteps = saved.recoverySteps;
+    recoveryMotion = saved.motion;
+    replaceLeg = saved.replaceLeg;
+    recoveryDirectionIndex = saved.direction;
+    recoveryTriedDirections = saved.triedDirections;
+    recoveryBaseMask = saved.baseMask;
+    memcpy(replaceBaseX, saved.baseX, sizeof(saved.baseX));
+    memcpy(replaceBaseZ, saved.baseZ, sizeof(saved.baseZ));
     footLanding_rollback();
+    if (saved.recovery != RECOVERY_IDLE)
+      walkingSupportGeometry(false);
     walkingFootTargets = false;
     if (walkingUnreachableLeg < NUM_OF_LEGS && walkingUnreachableSearch)
     {
-      // The search went below reach without finding ground: run the missing-ground
-      // retrace/reverse recovery from the last issued pose instead of pausing.
+      // The search went below reach without finding ground: begin geometry-guided recovery
+      // from the last issued pose instead of pausing.
       walkingPaused = false;
       walkingPauseReason[0] = 0;
       footLanding_noGround(walkingUnreachableLeg);
@@ -2624,10 +3210,6 @@ void contactWalking()
     issuedStep = GaitStep;
     issuedForce = ForceGaitStepCnt;
     walkingFrameIssued = true;
-    if (!footSensorBypass && footRecovery != RECOVERY_RETRACE)
-    {
-      footLanding_record(effectiveX, effectiveY, effectiveZ, effectiveRotation);
-    }
   }
   walkingFootTargets = false;
   bool displaced = false;
@@ -2652,7 +3234,15 @@ void contactWalking()
     {
       // Normal stance with every foot confirmed on the ground.
       footRecovery = RECOVERY_WAIT_CENTER;
-      replaceRetreated = false;
+      if (footLanding_clearRecovery())
+      {
+        recoveryFailedCount = recoveryRememberedLegMask = recoveryTriedDirections =
+            recoveryBaseMask = 0;
+        recoveryDirectionIndex = 0xff;
+        recoveryEpisodeActive = false;
+        recoveryMotion = {};
+        recoverySteps = 0;
+      }
       Serial.println(F("Retreat stopped. Center all sticks, then send fresh movement input."));
     }
   }
@@ -2680,6 +3270,32 @@ void webStop(bool disable)
   {
     webArmed = false;
     webDisablePending = true;
+  }
+}
+
+// Lets the page tell a robot restart (for example a servo-current brownout) from a network
+// timeout.
+uint32_t webBootId()
+{
+  static uint32_t id;
+  while (!id) id = esp_random();
+  return id;
+}
+
+const char *webResetReason()
+{
+  switch (esp_reset_reason())
+  {
+  case ESP_RST_POWERON: return "power on";
+  case ESP_RST_BROWNOUT: return "brownout: supply voltage dropped";
+  case ESP_RST_PANIC: return "firmware crash";
+  case ESP_RST_INT_WDT:
+  case ESP_RST_TASK_WDT:
+  case ESP_RST_WDT: return "watchdog";
+  case ESP_RST_SW: return "software restart";
+  case ESP_RST_EXT: return "reset pin";
+  case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+  default: return "unknown";
   }
 }
 
@@ -2965,6 +3581,8 @@ void webService()
     lastStatus = now;
     JsonDocument status;
     status["ready"] = true;
+    status["boot"] = webBootId();
+    status["resetReason"] = webResetReason();
     status["enabled"] = bool(bHexON);
     status["armed"] = webArmed;
     status["hold"] = webStopHold || footLanding_fault();
@@ -2991,9 +3609,14 @@ void webService()
     status["contacts"] = footSensor_getSensorMask();
     status["landing"] = footLanding_busy();
     status["recovery"] = int(footRecovery);
-    const char *recoveryNames[] = {"IDLE",        "RETRACE",    "REVERSE", "SETTLE",
-                                   "WAIT_CENTER", "WAIT_INPUT", "HOLD",    "REPLACE"};
-    status["recoveryState"] = recoveryNames[int(footRecovery)];
+    // Must name every FootRecovery value in order; an unnamed state reads past the table and crashes.
+    static const char *const recoveryNames[] = {"IDLE", "RETREAT", "SETTLE", "WAIT_CENTER",
+                                                "WAIT_INPUT", "HOLD", "PLACE", "SHIFT",
+                                                "RECENTER", "UNDO"};
+    unsigned recoveryIndex = unsigned(footRecovery);
+    status["recoveryState"] = recoveryIndex < sizeof(recoveryNames) / sizeof(recoveryNames[0])
+                                  ? recoveryNames[recoveryIndex]
+                                  : "UNKNOWN";
     status["fault"] = footLanding_reason();
     status["result"] = webResult;
     if (isfinite(cell1) && isfinite(cell2) && lastBattery)

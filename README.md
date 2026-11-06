@@ -48,7 +48,7 @@ Contact-aware walking interpolates horizontal foot coordinates and gait rotation
 with the actual vertical descent progress. It does not apply the next horizontal
 target while the foot is still at the preceding full-lift height. Raw-contact
 pauses therefore pause both components. The nominal gait remains separate from
-the output coordinates; pose retention and recovery history store the coordinates
+the output coordinates; pose retention stores the coordinates
 actually issued. Joint/calibrated-servo limits and unreachable walking targets
 pause or recover instead of HOLD (see below). Host regression tests exercise the real contact scheduler, FK, IK,
 and calibration for 56 mm height / 30 mm lift in both travel directions; these
@@ -324,6 +324,11 @@ ownership conflicts, and network errors still disable control. The server's
 750 ms watchdog is unchanged; rejected busy requests do not renew its lease.
 The status notice above the controls shows rejected actions and HOLD reasons,
 so a blocked safety state is not presented as a frozen page.
+A command with no reply shows "Control interrupted: no reply from robot".
+Telemetry carries a per-boot ID and the ESP32 reset reason (`boot`,
+`resetReason`). When the ID changes, the page reports "Robot restarted
+(reason)", for example a brownout from servo current, and drops its own
+arming. That message stays until Control is enabled again.
 If commands cease for 750 ms, or Disable is requested, stored travel is
 zeroed and valid gait landing/settling finishes before control is disabled.
 There is no automatic resume: a new explicit Enable action with centered
@@ -439,7 +444,7 @@ manual heights; those still use the existing preset-threshold selection.
 These dimensions are not a guarantee that every walking, rotation,
 or single-leg target is reachable; foot protection must be enabled separately.
 
-Normal leg lift is `DEFAULT_LEG_LIFT_MM = 25` mm. The browser Lift +/-5 buttons
+Normal leg lift is `DEFAULT_LEG_LIFT_MM = 30` mm. The browser Lift +/-5 buttons
 select 25-50 mm; the original controller's high-lift button still toggles
 `HIGH_LEG_LIFT_MM = 40` mm and back to 25 mm.
 These are operator-selected values, not a verified safe envelope; lifts above
@@ -500,13 +505,18 @@ four or five distributed feet can. Positions are commanded estimates and the
 center projection is an approximation, not a measured center of mass or load.
 
 If a proposed lift would remove needed support, its gait targets/step are
-rolled back. Any current airborne group lands first. Only between swings,
+rolled back. Any current airborne group lands first. Automatic slow-wave
+fallback is OFF by default: `BUILDCFG_SLOW_WAVE_FALLBACK_ENABLED = 0` in
+[setup.h](setup.h). The robot waits for support without changing its selected
+gait. Set the flag to `1` to enable automatic fallback. Only between swings,
 the controller selects the Wave 24 gait (one swing leg at a time), normal
 20 mm maximum lift (`FALLBACK_LEG_LIFT_MM`), translation capped at 16 mm, no turning, and at least
 `FOOT_WALK_FALLBACK_STEP_MS = 400` per step. The selected gait/lift are restored
 after stopping and settling. This fallback can override creep's usual tripod;
 it does not waive contact, support, workspace, or joint checks. If even one-leg
 lifting is unsupported, no new lift is issued.
+This flag does not disable support checks or the separate exact body-shift retreat
+used by missing-ground recovery.
 
 A supporting switch release has `FOOT_WALK_SUPPORT_GRACE_MS = 200` grace.
 If the remaining support polygon is usable, a persistent release starts a
@@ -584,49 +594,94 @@ If the target becomes unreachable only because a landing foot searched below
 its planned height without finding ground (reachable without the search depth),
 the target is not issued and the frame is rolled back. It is then handled as
 missing ground (`no ground within leg reach`), exactly like the search timeout
-below: commands are bypassed while the robot retraces to the last pose with all
-feet down, walks three gait cycles opposite to the last travel, and settles.
+below.
 
-On a genuine missing-ground search timeout, the controller first attempts to
-retrace the airborne feet's recorded commanded gait-coordinate paths, holding
-the other foot targets. Per-foot history has 256 frames; overflow invalidates
-it instead of silently using a truncated path. Returning to the old coordinates
-is not enough: returning feet must contact and the remaining feet must provide
-a usable support polygon before opposite travel starts.
-Path recovery has a 10-second timeout. These coordinates are requested
-targets, not measured physical positions; servo lag, body motion, slipping,
-and obstacles can invalidate a physical retrace.
+On a genuine missing-ground timeout (including a support foot lost at a table
+edge), recovery does not require the prior travel direction or a recorded path.
+The failed foot is retracted from its downward search to its last valid support
+height. From actual foot geometry, the controller remembers each failed
+outward side and selects a small retreat/placement direction that is not toward
+any remembered side. Opposing failed sides therefore constrain the next move
+to a perpendicular direction, rather than reversing toward an older failure.
+Only the foot whose search actually timed out (plus feet already marked lost)
+is a failure. Another foot that is still searching at that moment is not
+remembered, retracted, or re-placed; it keeps searching and recovery waits for
+it, so it becomes a failed side only if its own search later times out.
+Each lost foot is handled sequentially, with bounded escalation per direction:
 
-Table edge: if a support foot loses contact while walking (it stepped onto an
-edge and slid off) and its support search times out, the same retreat runs
-instead of HOLD. The lost foot is raised back to its last support height and is
-not searched again; it counts as missing support until it touches down again.
-Because the held feet are already the robot's only support, the retrace of
-airborne feet is not blocked by the support-polygon check in this case; it only
-lowers them back onto ground they left. If the reverse walk cannot lift a group
-without that foot, the slow one-leg wave fallback starts with the lost foot so
-it steps back onto the surface first. A failed retreat or a new fault during
-the retreat still enters HOLD.
+- **Step A:** choose the highest safe clearance lift from 20 down to 8 mm in
+  2 mm decrements, checked with landing Y and the existing IK/calibration margins.
+  Follow with an 8 mm inward placement and one ordinary bounded contact search.
+  If no clearance (even 8 mm) is safe, skip the lift and enter Step B directly;
+  an unsafe horizontal placement also enters Step B without issuing that target.
+- **Step B (always enabled):** choose the same adaptive clearance, then tuck the
+  lost foot inward along its measured hip-to-foot radius in separate **5 mm servo
+  moves**, at regular step time, up to **15 mm total**. Stop at the first rejected
+  increment, retaining the last safe position. Only then move the body away in 6 mm
+  increments, up to 30 mm per direction, keeping planted feet fixed on the
+  ground. Keep the lost foot at that lifted, tucked X/Z throughout the slide, with
+  no intermediate contact searches. After the final increment (30 mm or the first
+  rejected increment), lower straight down at the held X/Z and search once. A
+  zero-distance slide skips this probe and escalates directly. If even the minimum
+  clearance is unsafe, escalate to Step C/the next direction **without sliding an
+  unlifted foot**. Every increment checks
+  the planted-foot support polygon, a 5 mm femur-pivot reach margin, and 5 degree
+  joint/calibration margins before issuing any motion. The first rejected
+  increment stops shifting: the constant is a ceiling, not a promise of travel.
+  Approximate radial room at body heights 45/56/65/85 mm is 14/31/34/13 mm;
+  actual geometry and calibration determine the runtime limit.
+- **Step C (optional):** `BUILDCFG_RECOVERY_WALK_AWAY_ENABLED=1` permits up to two
+  additional cycles per direction: sequentially lift, re-center and contact-search
+  each supporting foot, then shift the body up to another 15 mm (in checked
+  increments). The lost foot stays at its validated clearance and held tuck through
+  the whole cycle (no additional tuck beyond 15 mm), then lowers straight down and searches once at the end. The default is
+  **1 (ON)**; setting it to **0** disables only these walk-away cycles.
+- **Step D:** when those actions are exhausted, mark the direction tried and
+  undo the outstanding body shift only if the return pose passes the same
+  checks; otherwise retain the safe pose. Try the next direction avoiding every
+  remembered failed side only while a lost foot remains. Otherwise complete a
+  sequential neutral re-center instead of starting another placement. HOLD occurs when no supported safe action remains.
 
-If a support foot loses contact while the gait is at rest (or right after a
-retreat settles), it is retracted to its last support height, the timeout is
-cleared, and the foot is lifted and set down again at its home spot with the
-normal slow landing search (recovery state `REPLACE`). The other feet must
-form a support polygon first. If it touches, all six feet are in contact and
-walking continues normally. If the re-placed foot still finds no ground, the
-robot walks back once (three gait cycles opposite to the last travel) and
-checks again; a second failure, or no known travel direction, enters HOLD. A
-retreat ends only when all six feet report contact; then center the sticks and
-send fresh movement.
+After placement, recovery ensures at least 8 mm of actual body displacement
+along the selected direction, counting prior shifts rather than repeating them.
+If a post-placement retreat is rejected at the reach/support limit with no lost
+feet, stop translating and proceed directly to sequential neutral re-centering;
+never reuse the completed-foot sentinel as a leg index. Invalid active-leg or
+recovery-direction indices are guarded before any array access and cause safe
+re-centering or a diagnostic HOLD. A blocked completion re-center ends in HOLD,
+not an endless undo/retry loop.
 
-If history is unavailable or restoration fails, opposite travel is permitted
-only with a usable support polygon; otherwise recovery enters HOLD. With support
-restored, X/Z translation and rotation reverse the last nonzero travel request.
-The controller requests three complete gait periods of opposite travel, then
-zeros travel and finishes settling the feet. Each reverse target still passes
-landing, workspace, and joint-limit checks. A new fault during retreat holds
-instead of recursively reversing again. Foot placement/settling may require
-additional steps beyond those three periods.
+It then re-centers **all** feet one at a time while the body keeps its retreat
+position: first every support foot, then the recovered foot(s) last. Each foot
+lifts by the highest clearance (20 down to 8 mm, like Step A) at which both the
+lift and the lifted neutral target are safe, moves to that neutral target, then
+does an ordinary bounded contact
+search, so the robot drags itself away from the edge one leg at a time.
+If undo completion still holds an airborne recovery foot (lifting clears its lost
+bit), first finish lowering/searching that foot at its held X/Z before lifting
+another support.
+The final stance is neutral and the outstanding body offset is zero. Body shifts
+and re-centering use regular stepping time, with no recovery 400 ms floor and
+no wave-24 gait substitution. The separate optional slow-wave fallback retains
+its own behavior; the operator's selected gait/lift are restored afterward.
+Integer-millimeter targets round vector endpoints (not individual increments);
+retreat rounds outward when necessary to preserve the minimum displacement.
+
+A foot that loses ground during re-centering is another recovery loss: remember
+its measured outward side and avoid it as well. If a previously recovered foot
+still has no ground at neutral, escalate to further bounded shifting (with a
+fresh shift budget, since the supports are already neutral) rather than
+looping on the same successful inward placement. Eight compass candidates plus
+up to two geometry-derived perpendicular candidates per remembered side keep
+direction selection finite. Battery and mechanical/geometry hard faults are
+never retried. Failed-side memory and retry accounting clear only after all six
+contacts are stable and settled. Center sticks, then provide fresh movement to
+resume normal walking.
+
+The support polygon is a commanded-foot geometry check, not a measured
+center-of-mass or force estimate. Servo lag, slipping, obstacles, uneven
+surfaces, and switch faults can still make a valid target unsafe; automatic
+recovery cannot guarantee stability.
 
 After stopping, all sticks must be centered in a received command before fresh
 movement is accepted. Commands cannot change mode, height, or direction during
@@ -645,11 +700,12 @@ switch contact and a commanded support polygon cannot guarantee stability.
 
 For initial validation use supported creep at 45 mm, short commands, and
 surfaces under ALL feet. Verify multi-foot touchdown, no-surface HOLD, stuck
-switch HOLD, missing-history HOLD, recorded-path recovery, three-cycle opposite
-travel and fresh-input interlock, four/five-contact support patterns, bounded
-support-loss search, slow-wave fallback, sensor HOLD cancellation and explicit
-resume, hard-fault refusal, and that no next support group lifts
-before the pending landing is resolved. Only proceed to loaded testing after
+switch HOLD, sequential losses from every leg, below-support-depth retraction,
+the single 20 mm clearance attempt and held-foot slide before one vertical probe, opposite-side perpendicular selection,
+no travel/history prerequisite, bounded no-safe-direction HOLD, four/five-contact
+support patterns, sensor HOLD cancellation and explicit resume, hard-fault
+refusal, and that no next support group lifts before the pending landing is
+resolved. Only proceed to loaded testing after
 mechanical clearance/overtravel is confirmed. Higher gaits, high lift, larger
 strides, turns, and balance-enabled walking can still violate geometry and
 will HOLD rather than be made valid by the contact feature.
@@ -745,9 +801,11 @@ switch bounce, a switch held pressed before LOWER, STOP during descent, and
 joint-limit rejection. Confirm actual stopping distance and switch overtravel.
 `POSITION` explicitly restarts a test after a terminal state.
 
-Adaptive walking, whole-gait scheduling changes, and automatic retreat are
-not enabled in this stage. Disable `FOOT_SENSOR_TEST_ENABLED` to restore
-normal robot operation. Contact sensing remains diagnostic only there.
+Adaptive walking and whole-gait scheduling changes are not enabled in this
+stage. The general recovery described above is limited to cautious contact
+placement, bounded body shifts, and sequential neutral re-centering. Disable `FOOT_SENSOR_TEST_ENABLED`
+to restore normal robot operation; contact sensing remains diagnostic only
+there.
 
 ### Software validation
 
