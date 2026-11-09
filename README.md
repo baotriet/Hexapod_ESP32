@@ -301,6 +301,13 @@ Operation, Gait, Height, and Single leg share one row; Height, Lift, +5 mm and
 Double travel and other toggle buttons share a compact horizontal row, wrapping on narrow screens.
 The **IMU active** label controls the existing IMU body-balance setting; it
 does not power the IMU hardware on or off.
+IMU readings and [PID corrections](pid.cpp) use degrees. [Body kinematics](Hex.cpp)
+converts corrections to its tenths-of-a-degree convention for both standing and
+cached contact-aware walking corrections. PID output is limited to +/-40 degrees,
+preserving the intended original PID range. Correcting the units increases the
+effective maximum from 4 to 40 degrees. Gains and axis mapping are unchanged. Verify correction
+direction and leg travel with the robot securely supported before hardware use;
+software tests do not establish physical stability.
 The speed slider displays its current percentage and sends `100 - percentage`
 as the existing firmware delay (0-100 ms). Zero percent selects the slowest
 setting, not stop; this is not measured physical velocity.

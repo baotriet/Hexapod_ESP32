@@ -745,11 +745,12 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
   CPR_Y = PosY + bodyRotOffsetY;
   CPR_Z = (short)pgm_read_word(&cOffsetZ[BodyIKLeg]) + PosZ + bodyRotOffsetZ;
 
-  sinCos4 = helperFunc_getSinCos(BodyRotX + TotalXBal1 + bodyBalance[0]);
+  // IMU corrections are degrees; the FK angle convention is tenths of a degree.
+  sinCos4 = helperFunc_getSinCos(BodyRotX + TotalXBal1 + bodyBalance[1] * c1DEC);
   SinG4 = sinCos4[0];
   CosG4 = sinCos4[1];
 
-  sinCos4 = helperFunc_getSinCos(BodyRotZ + TotalZBal1 + bodyBalance[1]);
+  sinCos4 = helperFunc_getSinCos(BodyRotZ + TotalZBal1 + bodyBalance[0] * c1DEC);
   SinB4 = sinCos4[0];
   CosB4 = sinCos4[1];
 
@@ -2404,9 +2405,9 @@ void setup()
   //  after motor init to calibrate the sensor
 
   currentState = STATE_IDLE;
-#ifdef BUILDCFG_BUZZER_AFTER_INIT_ENABLED
+#if BUILDCFG_BUZZER_AFTER_INIT_ENABLED
   buzzer_toggle(3, 200, 100);
-#endif
+#else
   digitalWrite(LED_RED_GPIO, HIGH);
   pinMode(LED_RED_GPIO, OUTPUT);
   for (byte i = 0; i < 3; ++i)
@@ -2416,6 +2417,7 @@ void setup()
     digitalWrite(LED_RED_GPIO, HIGH);
     delay(100);
   }
+#endif //BUILDCFG_BUZZER_AFTER_INIT_ENABLED
 #endif
 #ifdef DEBUG
   Serial.println("DONE: setup");

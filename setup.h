@@ -117,7 +117,7 @@
  * The three red LED initialization blinks are unaffected.
  */
 #ifndef BUILDCFG_BUZZER_AFTER_INIT_ENABLED
-#define BUILDCFG_BUZZER_AFTER_INIT_ENABLED 1
+#define BUILDCFG_BUZZER_AFTER_INIT_ENABLED 0
 #endif
 
 #endif // SETUP_H_

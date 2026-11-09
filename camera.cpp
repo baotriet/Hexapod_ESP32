@@ -121,13 +121,13 @@ static esp_err_t camera_init()
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   // A 320x240 preview is sufficient between phone joysticks and leaves bandwidth for control.
-  config.frame_size = FRAMESIZE_QVGA;
+  config.frame_size = FRAMESIZE_VGA;
   config.pixel_format = PIXFORMAT_JPEG; // for streaming
   if (config.pixel_format == PIXFORMAT_JPEG)
   {
     if (psramFound())
     {
-      config.frame_size = FRAMESIZE_QVGA;
+      config.frame_size = FRAMESIZE_VGA;
       config.fb_location = CAMERA_FB_IN_PSRAM;
       config.grab_mode = CAMERA_GRAB_LATEST;
       config.jpeg_quality = 14;
