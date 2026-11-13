@@ -28,6 +28,11 @@
 #define BUILDCFG_MOTION_TIMING_ENABLED 0
 #endif
 
+// Ordinary WALK only; set to 0 for the original stop-at-each-waypoint trajectory.
+#ifndef BUILDCFG_WALK_CONTINUITY_ENABLED
+#define BUILDCFG_WALK_CONTINUITY_ENABLED 1
+#endif
+
 /**
  * @brief Enable Wi-Fi HTTP services for robot control and browser firmware updates.
  */

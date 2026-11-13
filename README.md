@@ -38,6 +38,27 @@ pose retries them. Transfers are not atomic across boards, and a bus failure
 can leave a partially applied pose. Calibration and stop commands outside a
 servo-output pass remain immediate single-channel writes.
 
+`BUILDCFG_WALK_CONTINUITY_ENABLED` defaults to `1` in [setup.h](setup.h).
+Ordinary WALK with foot protection off previews one next gait waypoint using
+the current frozen IMU correction. The preview restores gait, balance, FK,
+and joint state, never advances the live gait step, and issues no servo commands
+or sensor reads. Unreachable or mechanically limited previews fall back to
+settled waypoints, with a transition-suppressed Serial warning.
+Compatible same-direction joint movements share bounded cubic boundary
+velocities; zero-distance joints, reversals, touchdown, liftoff, and
+lift/descent boundaries retain zero velocity. Interpolation is monotone,
+reaches exact endpoints, and keeps the existing nominal peak-speed limit.
+Only a compatible intermediate waypoint skips the extra final-PWM-frame dwell.
+The next segment must match the preview, settings, and duration exactly; a
+handoff delayed by a full frame discards its entry velocity. Calculation time
+within a valid handoff is included in the new segment's elapsed time.
+Travel, gait, lift, speed, stance, or balance changes invalidate the preview;
+STOP settles without continuing the preview, and HOLD issues no new outputs.
+Contact walking, recovery, calibration, and standing transitions retain their
+existing scheduler and settling checks. Set the flag to `0` and rebuild for
+an off/on comparison or rollback. This changes waypoint continuity, not gait
+geometry or nominal walking speed; real MG90S load response still needs testing.
+
 Battery sampling starts a two-channel ADS1115 pair every 100 ms, without waiting
 for conversion completion. Battery protection and all HTTP consumers share the
 same complete pair; HTTP handlers never access I2C. Existing voltage thresholds
@@ -101,6 +122,9 @@ degree conversion, and PID settings are unchanged. Contact walking still
 samples outside `doKinetic()` and reuses its existing cached corrections inside
 it. Expect `calls / ikN` near one in steady ordinary walking, not six; contact
 walking and other kinematics callers can produce a different ratio.
+Continuity previews reuse the snapshot and are excluded from `ikN` and IK timing,
+so the steady ordinary `calls / ikN` ratio remains near one. Their calculation
+cost is still reflected in servo-output interval statistics.
 The IMU/IK line uses its own five-second UART-space gate and resets both
 statistics only after a successful report. Gait and sensor enable behavior
 are unchanged. Compare steady windows and ignore startup/idle transitions.
@@ -112,6 +136,9 @@ are unchanged. Compare steady windows and ignore startup/idle transitions.
 3. Walk steadily for at least 15 seconds, comparing camera off/on and foot
    protection off/on. Save timing lines and note any visible hesitation or
    protection/recovery messages. Fewer late frames do not prove smooth mechanics.
+   For continuity testing, keep foot protection off and compare builds with
+   `BUILDCFG_WALK_CONTINUITY_ENABLED=0` and `1` at the same settings. Check forward,
+   sideways, turning, reversals, and STOP; stop the test if movement is unstable.
 4. If hesitation remains under load, measure servo supply voltage during motion
    and check wiring, binding, and torque. Keep PWM at 50 Hz and do not alter
    calibration offsets as a timing fix.

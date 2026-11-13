@@ -67,6 +67,23 @@ ServoMotion servoMotion[NUM_OF_LEGS];
 ServoFrameClock servoFrameClock;
 uint32_t servoOutputTime;
 float kinematicsBodyBalance[3];
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+bool walkingKinematicsPreview;
+bool walkingPreviewSafe;
+bool walkingBlendPending;
+short walkingBlendFrom[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
+short walkingBlendTarget[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
+float walkingBlendVelocity[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
+uint32_t walkingBlendDuration;
+uint32_t walkingBlendBoundaryTime;
+byte walkingBlendStep;
+long walkingPreviousY[NUM_OF_LEGS];
+bool walkingSettingsUnchanged(bool capture = false);
+bool walkingContinuityEligible();
+void beginWalkingServoMove();
+bool walkingSegmentReached();
+void stopWalkingContinuity();
+#endif
 #if BUILDCFG_MOTION_TIMING_ENABLED
 MotionTiming motionTiming;
 static uint32_t lastTimingReport;
@@ -864,6 +881,21 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
  */
 void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
 {
+  auto reachable = [&](long y)
+  {
+    float horizontal = hypotf(IKFeetPosX, IKFeetPosZ);
+    int femur = pgm_read_byte(&cFemurLength[legNr]);
+    int tibia = pgm_read_byte(&cTibiaLength[legNr]);
+    float distance = hypotf(horizontal - pgm_read_byte(&cCoxaLength[legNr]), y);
+    return y > 0 && horizontal >= 1 && distance > abs(femur - tibia) && distance < femur + tibia;
+  };
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+  if (walkingKinematicsPreview && !reachable(IKFeetPosY))
+  {
+    walkingPreviewSafe = false;
+    return;
+  }
+#endif
 #ifdef FOOT_SENSOR_WALK_ENABLED
   if (walkingFootTargets)
   {
@@ -872,15 +904,6 @@ void doLegIK(short IKFeetPosX, short IKFeetPosY, short IKFeetPosZ, byte legNr)
     walkingIKX[legNr] = IKFeetPosX;
     walkingIKY[legNr] = IKFeetPosY;
     walkingIKZ[legNr] = IKFeetPosZ;
-    float horizontal = hypotf(IKFeetPosX, IKFeetPosZ);
-    int femur = pgm_read_byte(&cFemurLength[legNr]);
-    int tibia = pgm_read_byte(&cTibiaLength[legNr]);
-    float coxa = pgm_read_byte(&cCoxaLength[legNr]);
-    auto reachable = [&](long y)
-    {
-      float distance = hypotf(horizontal - coxa, y);
-      return y > 0 && horizontal >= 1 && distance > abs(femur - tibia) && distance < femur + tibia;
-    };
     if (!reachable(IKFeetPosY))
     {
       // No PWM for this target; contactWalking decides between missing-ground recovery and pause.
@@ -1095,20 +1118,24 @@ void adjustLegPosToBodyHeight(void)
 #endif // CNT_HEX_INITS
 }
 
+uint32_t servoMinimumTime(short from, short to)
+{
+  // Monotone bounded cubics peak at no more than 1.5 times their average joint velocity.
+  return uint32_t(ceilf(abs(to - from) * 0.15f * SERVO_TIME_6V * 1000 / SERVO_ANGLE_6V));
+}
+
 void beginServoMove()
 {
   uint32_t now = millis();
   uint32_t frame = (1000U + PWM_FREQ - 1) / PWM_FREQ;
   uint32_t duration = servoMoveTime > frame ? servoMoveTime - frame : 1;
-  // Cubic easing peaks at 1.5 times average velocity; respect the configured nominal servo rate.
   const short *current[] = {coxaAngleTemp, femurAngleTemp, tibiaAngleTemp};
   const short *target[] = {coxaAngle, femurAngle, tibiaAngle};
   for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
   {
     for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
     {
-      uint32_t minimum = uint32_t(ceilf(abs(target[joint][leg] - current[joint][leg]) *
-                                     0.15f * SERVO_TIME_6V * 1000 / SERVO_ANGLE_6V));
+      uint32_t minimum = servoMinimumTime(current[joint][leg], target[joint][leg]);
       duration = _max(duration, minimum);
     }
   }
@@ -2281,6 +2308,9 @@ void doKinetic()
 #if BUILDCFG_MOTION_TIMING_ENABLED
   uint32_t started = micros();
 #endif
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+  if (!walkingKinematicsPreview)
+#endif
 #ifdef FOOT_SENSOR_WALK_ENABLED
   if (!walkingFootTargets)
 #endif
@@ -2310,9 +2340,198 @@ void doKinetic()
             legPosZ[legNr] + bodyPosZ - BodyFKPosZ + GaitPosZ[legNr] - TotalTransZ, legNr);
   }
 #if BUILDCFG_MOTION_TIMING_ENABLED
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+  if (!walkingKinematicsPreview)
+#endif
   kinematicsTiming.record(uint32_t(micros() - started));
 #endif
 }
+
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+bool walkingContinuityEligible()
+{
+  return OperationMode == MODE_WALK && bHexON && TravelRequest && ForceGaitStepCnt == 0 &&
+         (abs(TravelLengthX) > cTravelDeadZone || abs(TravelLengthZ) > cTravelDeadZone ||
+          abs(TravelRotationY) > cTravelDeadZone) &&
+         !walkingFootTargets
+#ifdef FOOT_SENSOR_WALK_ENABLED
+         && !footWalkingEnabled && !footSensorBypass && footRecovery == RECOVERY_IDLE
+#endif
+#ifdef WEB_CONTROLLER_ENABLED
+         && !webStopHold && !webDisablePending
+#endif
+         ;
+}
+
+bool walkingSettingsUnchanged(bool capture)
+{
+  const long settings[] = {
+      TravelLengthX, TravelLengthZ, TravelRotationY, bodyPosX, bodyPosY, bodyPosZ,
+      BodyRotX, BodyRotY, BodyRotZ, bodyRotOffsetX, bodyRotOffsetY, bodyRotOffsetZ,
+      GaitType, LegLiftHeight, static_cast<long>(SpeedControl), InputTimeDelay, NomGaitSpeed,
+      bBalanceMode, bBodyBalanceMode, creepActive, OperationMode,
+      NrLiftedPos, FrontDownPos, LiftDivFactor, TLDivFactor, HalfLiftHeight, StepsInGait,
+      legPosX[0], legPosX[1], legPosX[2], legPosX[3], legPosX[4], legPosX[5],
+      legPosY[0], legPosY[1], legPosY[2], legPosY[3], legPosY[4], legPosY[5],
+      legPosZ[0], legPosZ[1], legPosZ[2], legPosZ[3], legPosZ[4], legPosZ[5]};
+  static long saved[sizeof(settings) / sizeof(settings[0])];
+  bool same = memcmp(saved, settings, sizeof(settings)) == 0;
+  if (capture) memcpy(saved, settings, sizeof(settings));
+  return same;
+}
+
+uint32_t walkingPoseDuration(const short from[][3], const short to[][3])
+{
+  uint32_t duration = servoMoveTime;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+      duration = _max(duration, servoMinimumTime(from[leg][joint], to[leg][joint]));
+  return _max(duration, 1U);
+}
+
+bool previewWalkingWaypoint(short target[][3], long nextY[])
+{
+  // Same-thread transaction: no gait-step advance, PID sample, or servo output.
+  long x[NUM_OF_LEGS], y[NUM_OF_LEGS], z[NUM_OF_LEGS], rotation[NUM_OF_LEGS];
+  short c[NUM_OF_LEGS], f[NUM_OF_LEGS], t[NUM_OF_LEGS];
+  memcpy(x, GaitPosX, sizeof(x)); memcpy(y, GaitPosY, sizeof(y));
+  memcpy(z, GaitPosZ, sizeof(z)); memcpy(rotation, GaitRotY, sizeof(rotation));
+  memcpy(c, coxaAngle, sizeof(c)); memcpy(f, femurAngle, sizeof(f));
+  memcpy(t, tibiaAngle, sizeof(t));
+  long balance[] = {TotalTransX, TotalTransY, TotalTransZ, TotalXBal1, TotalYBal1, TotalZBal1};
+  long fk[] = {BodyFKPosX, BodyFKPosY, BodyFKPosZ};
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg) calculateGait(leg);
+  memcpy(nextY, GaitPosY, sizeof(y));
+  TotalTransX = TotalTransY = TotalTransZ = TotalXBal1 = TotalYBal1 = TotalZBal1 = 0;
+  doBalance();
+  walkingPreviewSafe = true;
+  walkingKinematicsPreview = true;
+  doKinetic();
+  walkingKinematicsPreview = false;
+  const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
+  const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+    {
+      target[leg][joint] = angles[joint] + calibration_offset(leg, joint);
+      walkingPreviewSafe &= angles[joint] > (short)pgm_read_word(&mins[joint][leg]) &&
+                            angles[joint] < (short)pgm_read_word(&maxs[joint][leg]) &&
+                            abs(target[leg][joint]) < 900;
+    }
+  }
+  memcpy(GaitPosX, x, sizeof(x)); memcpy(GaitPosY, y, sizeof(y));
+  memcpy(GaitPosZ, z, sizeof(z)); memcpy(GaitRotY, rotation, sizeof(rotation));
+  memcpy(coxaAngle, c, sizeof(c)); memcpy(femurAngle, f, sizeof(f));
+  memcpy(tibiaAngle, t, sizeof(t));
+  TotalTransX = balance[0]; TotalTransY = balance[1]; TotalTransZ = balance[2];
+  TotalXBal1 = balance[3]; TotalYBal1 = balance[4]; TotalZBal1 = balance[5];
+  BodyFKPosX = fk[0]; BodyFKPosY = fk[1]; BodyFKPosZ = fk[2];
+  static bool rejected;
+  if (!walkingPreviewSafe && !rejected)
+    Serial.println(F("Walking continuity: unsafe preview; using settled waypoints."));
+  rejected = !walkingPreviewSafe;
+  return walkingPreviewSafe;
+}
+
+bool walkingSegmentReached()
+{
+  uint32_t now = millis();
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    if (!servoMotion[leg].finished(now) || coxaAngleTemp[leg] != coxaAngle[leg] ||
+        femurAngleTemp[leg] != femurAngle[leg] || tibiaAngleTemp[leg] != tibiaAngle[leg])
+      return false;
+  walkingBlendBoundaryTime = servoOutputTime;
+  return true;
+}
+
+void beginWalkingServoMove()
+{
+  short from[NUM_OF_LEGS][3], to[NUM_OF_LEGS][3], next[NUM_OF_LEGS][3];
+  float entry[NUM_OF_LEGS][3] = {}, exit[NUM_OF_LEGS][3] = {};
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    from[leg][0] = coxaAngleTemp[leg]; from[leg][1] = femurAngleTemp[leg];
+    from[leg][2] = tibiaAngleTemp[leg];
+    to[leg][0] = coxaAngle[leg]; to[leg][1] = femurAngle[leg];
+    to[leg][2] = tibiaAngle[leg];
+  }
+  uint32_t duration = walkingPoseDuration(from, to);
+  // GaitStep has already advanced once for this live pose.
+  byte expectedStep = walkingBlendStep == StepsInGait ? 1 : walkingBlendStep + 1;
+  bool continuing = walkingBlendPending && walkingSettingsUnchanged() &&
+                    expectedStep == GaitStep && duration == walkingBlendDuration &&
+                    uint32_t(millis() - walkingBlendBoundaryTime) <
+                        (1000U + PWM_FREQ - 1) / PWM_FREQ &&
+                    memcmp(from, walkingBlendFrom, sizeof(from)) == 0 &&
+                    memcmp(to, walkingBlendTarget, sizeof(to)) == 0;
+  if (continuing) memcpy(entry, walkingBlendVelocity, sizeof(entry));
+  long nextY[NUM_OF_LEGS];
+  bool previewSafe = previewWalkingWaypoint(next, nextY);
+  if (continuing && uint32_t(millis() - walkingBlendBoundaryTime) >=
+                        (1000U + PWM_FREQ - 1) / PWM_FREQ)
+  {
+    continuing = false;
+    memset(entry, 0, sizeof(entry));
+  }
+  uint32_t nextDuration = previewSafe ? walkingPoseDuration(to, next) : 1;
+  walkingBlendPending = false;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    // Stop this leg at touchdown, liftoff, or the lift/descent reversal.
+    bool samePhase = (walkingPreviousY[leg] == 0 && GaitPosY[leg] == 0 && nextY[leg] == 0) ||
+                     (GaitPosY[leg] < 0 && nextY[leg] < 0 &&
+                      (GaitPosY[leg] - walkingPreviousY[leg]) *
+                          (nextY[leg] - GaitPosY[leg]) > 0);
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+    {
+      if (previewSafe && samePhase)
+        exit[leg][joint] = ServoMotion::boundaryVelocity(from[leg][joint], to[leg][joint],
+                                                        next[leg][joint], duration, nextDuration);
+      walkingBlendPending |= exit[leg][joint] != 0;
+    }
+  }
+  if (walkingBlendPending)
+  {
+    memcpy(walkingBlendFrom, to, sizeof(to));
+    memcpy(walkingBlendTarget, next, sizeof(next));
+    memcpy(walkingBlendVelocity, exit, sizeof(exit));
+    walkingBlendDuration = nextDuration;
+    walkingBlendStep = GaitStep;
+  }
+  walkingSettingsUnchanged(true);
+  if (!walkingBlendPending && !continuing)
+  {
+    beginServoMove();
+    return;
+  }
+  // Charge preview/calculation time to the handoff, not to a new stationary endpoint dwell.
+  uint32_t now = continuing ? walkingBlendBoundaryTime : millis();
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+    servoMotion[leg].begin(from[leg], to[leg], now, duration, entry[leg], exit[leg]);
+}
+
+void stopWalkingContinuity()
+{
+  if (!walkingBlendPending) return;
+  walkingBlendPending = false;
+  uint32_t now = millis();
+  uint32_t minimum = 1;
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    minimum = _max(minimum, servoMinimumTime(coxaAngleTemp[leg], coxaAngle[leg]));
+    minimum = _max(minimum, servoMinimumTime(femurAngleTemp[leg], femurAngle[leg]));
+    minimum = _max(minimum, servoMinimumTime(tibiaAngleTemp[leg], tibiaAngle[leg]));
+  }
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    short from[] = {coxaAngleTemp[leg], femurAngleTemp[leg], tibiaAngleTemp[leg]};
+    short to[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
+    servoMotion[leg].stopAtTarget(from, to, now, minimum);
+  }
+}
+#endif
 
 /**
  * @brief Get the command
@@ -3775,6 +3994,9 @@ void loop()
   wifi_update(!bHexON && !webArmed && !calibration_busy());
   if (ota_locked())
   {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+    walkingBlendPending = false;
+#endif
     return;
   }
 #endif
@@ -3796,6 +4018,9 @@ void loop()
   bool calibrationActive = calibration_update(!bHexON && !webArmed, calibrationMove);
   if (calibrationActive || calibration_busy())
   {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+    walkingBlendPending = false;
+#endif
 #ifdef WEB_CONTROLLER_ENABLED
     WebCommand discarded;
     webControl_take(discarded);
@@ -3810,6 +4035,9 @@ void loop()
   webService();
   if (webStopHold)
   {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+    walkingBlendPending = false;
+#endif
     // Keep network/status servicing above this return, but issue no new motion targets while HOLD
     // is latched.
     return;
@@ -3835,6 +4063,9 @@ void loop()
       (footWalkingEnabled && (OperationMode == MODE_WALK || footLanding_fault())))
   {
     // Bypass must keep the pose-preserving scheduler, not fall back to legacy home/settling logic.
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+    walkingBlendPending = false;
+#endif
     contactWalking();
     return;
   }
@@ -3844,6 +4075,9 @@ void loop()
   }
 #endif
   // Gait
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+  memcpy(walkingPreviousY, GaitPosY, sizeof(walkingPreviousY));
+#endif
   calculateGaitSeq();
 
   // Balance calculations
@@ -3904,10 +4138,22 @@ void loop()
 
     if (bExtraCycle > 0)
     {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+      if (walkingContinuityEligible()) beginWalkingServoMove();
+      else
+      {
+        walkingBlendPending = false;
+        beginServoMove();
+      }
+#else
       beginServoMove();
+#endif
     }
     else
     {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+      walkingBlendPending = false;
+#endif
       for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
       {
         servoMotion[leg].cancel();
@@ -3928,10 +4174,17 @@ void loop()
         serviceBattery();
         if (!battMan_isPowerOk())
         {
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+          walkingBlendPending = false;
+#endif
           break;
         }
 #ifdef WEB_CONTROLLER_ENABLED
         webService();
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+        if (!walkingContinuityEligible() || !walkingSettingsUnchanged())
+          stopWalkingContinuity();
+#endif
         if (webStopHold || !bHexON)
         {
           break;
@@ -3943,7 +4196,14 @@ void loop()
         controlLegs();
         delay(1);
         // Wait the appropriate time, call any background process while waiting...
-      } while (uint32_t(millis() - servoMoveStart) < stepMoveTime || !servoTargetsReady());
+      } while (
+#if BUILDCFG_WALK_CONTINUITY_ENABLED
+          walkingBlendPending ? !walkingSegmentReached() :
+          (uint32_t(millis() - servoMoveStart) < stepMoveTime || !servoTargetsReady())
+#else
+          uint32_t(millis() - servoMoveStart) < stepMoveTime || !servoTargetsReady()
+#endif
+      );
     }
   }
 #else
