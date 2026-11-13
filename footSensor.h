@@ -46,7 +46,8 @@ bool footSensor_isAllLegsTriggered(void);
 bool footSensor_isTriggered(byte legNr);
 
 /**
- * @brief Get the debounced contact bitmask indexed by configured leg number.
+ * @brief Get the stable contact bitmask indexed by configured leg number.
+ * @details Software debounce is applied only when BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED is 1.
  *
  * @return Contact bitmask, not a count.
  */

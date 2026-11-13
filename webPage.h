@@ -329,6 +329,7 @@ static const char WEB_PAGE[] PROGMEM = R"HTML(<!doctype html>
   <section id="connection-panel">
     <div id="network"></div>
     <a href="/update">Firmware update (.bin)</a>
+    <a href="/calibration">Servo calibration</a>
   </section>
   <!-- Keep labels compact and omit grip controls; data-action values must still match the firmware API. -->
   <div class="deck">

@@ -66,9 +66,12 @@ void footSensor_update()
     return;
   }
   lastSample = now;
+#if BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED
   bool first = !sampled;
+#endif
   sampled = true;
   rawMask = pcf8575_getValue(0, NUM_OF_LEGS - 1);
+#if BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED
   // Require an unchanged candidate for the full debounce interval; count time, not loop iterations.
   for (byte pin = 0; pin < NUM_OF_LEGS; ++pin)
   {
@@ -84,6 +87,9 @@ void footSensor_update()
       stablePins = (stablePins & ~bit) | (candidatePins & bit);
     }
   }
+#else
+  candidatePins = stablePins = rawMask;
+#endif
 
   uint8_t previousMask = sensorMask;
   sensorMask = 0;
@@ -190,8 +196,12 @@ bool footSensor_isReleasedStable(byte legNr)
   }
   int pin = sensorPins[legNr];
   uint8_t bit = 1U << pin;
+#if BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED
   return sampled && !(rawMask & bit) && !(stablePins & bit) &&
          uint32_t(millis() - candidateSince[pin]) >= FOOT_SENSOR_RELEASE_MS;
+#else
+  return sampled && !(rawMask & bit) && !(stablePins & bit);
+#endif
 }
 
 void footSensor_setSensorMask(uint8_t mask)

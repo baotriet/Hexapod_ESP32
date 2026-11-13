@@ -9,6 +9,8 @@
 #include "webControl.h"
 #include "wifey.h"
 #include "ota.h"
+#include "calibration.h"
+#include <math.h>
 
 static bool httpDataReady = false;
 static byte httpInputData[7];
@@ -17,6 +19,7 @@ static byte httpInputData[7];
 static portMUX_TYPE httpLock = portMUX_INITIALIZER_UNLOCKED;
 static float cachedCell1, cachedCell2;
 static bool voltageReady;
+static uint32_t voltagePublished;
 
 /**
  * @brief HTTP POST handler for the "/values" endpoint.
@@ -95,6 +98,11 @@ static esp_err_t data_handler(httpd_req_t *req)
   {
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid checksum");
   }
+  if (calibration_busy())
+  {
+    httpd_resp_set_status(req, "409 Conflict");
+    return httpd_resp_send(req, "Calibration owns motion", HTTPD_RESP_USE_STRLEN);
+  }
 #ifdef WEB_CONTROLLER_ENABLED
   if (!webControl_claimLegacy())
   {
@@ -118,8 +126,8 @@ static esp_err_t data_handler(httpd_req_t *req)
 /**
  * @brief HTTP GET handler for the "/battInfo" endpoint.
  *
- * Returns { "cell1": <float>, "cell2": <float> }. Web builds use the main-loop
- * snapshot to avoid concurrent HTTP-task I2C access; legacy builds sample directly.
+ * Returns { "cell1": <float>, "cell2": <float> }. All builds use the main-loop
+ * snapshot to avoid concurrent HTTP-task I2C access in all builds.
  *
  * @param req Pointer to the incoming HTTP request
  * @return ESP_OK
@@ -127,20 +135,16 @@ static esp_err_t data_handler(httpd_req_t *req)
 static esp_err_t batt_info_handler(httpd_req_t *req)
 {
   float v1 = 0.0f, v2 = 0.0f;
-#ifdef WEB_CONTROLLER_ENABLED
   portENTER_CRITICAL(&httpLock);
-  bool available = voltageReady;
+  bool available = voltageReady && uint32_t(millis() - voltagePublished) <= 500;
   v1 = cachedCell1;
   v2 = cachedCell2;
   portEXIT_CRITICAL(&httpLock);
   if (!available)
   {
     httpd_resp_set_status(req, "503 Service Unavailable");
-    return httpd_resp_send(req, "Awaiting battery sample", HTTPD_RESP_USE_STRLEN);
+    return httpd_resp_send(req, "Battery sample unavailable", HTTPD_RESP_USE_STRLEN);
   }
-#else
-  battMan_getVoltages(&v1, &v2);
-#endif
 
   JsonDocument doc;
   doc["cell1"] = v1;
@@ -159,7 +163,8 @@ void http_setVoltages(float cell1, float cell2)
   portENTER_CRITICAL(&httpLock);
   cachedCell1 = cell1;
   cachedCell2 = cell2;
-  voltageReady = true;
+  voltageReady = isfinite(cell1) && isfinite(cell2);
+  voltagePublished = millis();
   portEXIT_CRITICAL(&httpLock);
 }
 
@@ -189,6 +194,7 @@ void http_init()
   httpd_handle_t data_httpd = NULL;
   httpd_config_t data_config = HTTPD_DEFAULT_CONFIG();
   data_config.server_port = 80;
+  data_config.max_uri_handlers = 12;
 
   httpd_handle_t stream_httpd = NULL;
   httpd_config_t stream_config = HTTPD_DEFAULT_CONFIG();
@@ -215,6 +221,7 @@ void http_init()
     webControl_register(data_httpd);
 #endif
     ota_register(data_httpd);
+    calibration_register(data_httpd);
     httpd_register_uri_handler(data_httpd, &batt_uri);
   }
   else

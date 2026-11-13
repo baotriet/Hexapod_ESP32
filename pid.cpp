@@ -15,6 +15,14 @@ static const float maxCorrectionDegrees = 40.0f;
 static PID_v2 pidX(pidCoorX.Kp, pidCoorX.Ki, pidCoorX.Kd, PID::Direct, PID::P_On::Error);
 static PID_v2 pidY(pidCoorY.Kp, pidCoorY.Ki, pidCoorY.Kd, PID::Direct, PID::P_On::Error);
 static PID_v2 pidZ(pidCoorZ.Kp, pidCoorZ.Ki, pidCoorZ.Kd, PID::Direct, PID::P_On::Error);
+#if BUILDCFG_MOTION_TIMING_ENABLED
+static WorkTiming imuTiming;
+
+WorkTiming &pid_timing()
+{
+  return imuTiming;
+}
+#endif
 
 void pid_init()
 {
@@ -29,6 +37,9 @@ void pid_init()
 
 const float *pid_update(float *output, int size)
 {
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  uint32_t started = micros();
+#endif
   mpu6050_update();
   float x = mpu6050_getAngle('X');
   float y = mpu6050_getAngle('Y');
@@ -36,6 +47,9 @@ const float *pid_update(float *output, int size)
   output[0] = pidX.Run(x);
   output[1] = pidY.Run(y);
   output[2] = pidZ.Run(z);
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  imuTiming.record(uint32_t(micros() - started));
+#endif
 #ifdef DEBUG_PID
   Serial.print(F("angle\t"));
   Serial.print(x);

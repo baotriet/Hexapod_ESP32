@@ -17,6 +17,7 @@
 #include "camera.h"
 #include "wifey.h"
 #include "ota.h"
+#include "calibration.h"
 #include "footSensor.h"
 #include "footSensorTest.h"
 #include "footLanding.h"
@@ -30,10 +31,12 @@
 #include "helperFunc.h"
 #include "servo.h"
 #include "servoMotion.h"
+#include "motionTiming.h"
 #include "battMan.h"
 #include "driver/buzzer.h"
 #include "driver/ads1115.h"
 #include "driver/pcf8575.h"
+#include "driver/drvPwm.h"
 
 // Runtime state and per-leg geometry
 
@@ -61,7 +64,83 @@ unsigned long previousMillis = 0;
 byte smoothBaseDiv = 4;
 byte smoothThreshold = 4;
 ServoMotion servoMotion[NUM_OF_LEGS];
+ServoFrameClock servoFrameClock;
 uint32_t servoOutputTime;
+float kinematicsBodyBalance[3];
+#if BUILDCFG_MOTION_TIMING_ENABLED
+MotionTiming motionTiming;
+static uint32_t lastTimingReport;
+static uint32_t lastPwmTimingReport;
+static uint32_t lastImuTimingReport;
+WorkTiming kinematicsTiming;
+
+static void reportImuTiming()
+{
+  uint32_t now = millis();
+  if (uint32_t(now - lastImuTimingReport) < 5000)
+  {
+    return;
+  }
+  WorkTiming &imu = pid_timing();
+  char line[128];
+  int length = snprintf(line, sizeof(line),
+                        "IMU/IK us: imuAvg=%lu imuMax=%lu calls=%lu ikAvg=%lu ikMax=%lu ikN=%lu\n",
+                        (unsigned long)imu.average(), (unsigned long)imu.maximum,
+                        (unsigned long)imu.count, (unsigned long)kinematicsTiming.average(),
+                        (unsigned long)kinematicsTiming.maximum,
+                        (unsigned long)kinematicsTiming.count);
+  if (length > 0 && length < int(sizeof(line)) && Serial.availableForWrite() >= length)
+  {
+    Serial.write(reinterpret_cast<const uint8_t *>(line), length);
+    lastImuTimingReport = now;
+    imu = WorkTiming();
+    kinematicsTiming = WorkTiming();
+  }
+}
+
+static void reportPwmTiming()
+{
+  uint32_t now = millis();
+  if (uint32_t(now - lastPwmTimingReport) < 5000)
+  {
+    return;
+  }
+  PwmTiming &timing = drvPwm_timing();
+  char line[128];
+  int length = snprintf(line, sizeof(line),
+                        "PWM us: avg=%lu max=%lu passAvg=%lu passMax=%lu writes=%lu fail=%lu\n",
+                        (unsigned long)timing.averageWrite(), (unsigned long)timing.maxWrite,
+                        (unsigned long)timing.averagePass(), (unsigned long)timing.maxPass,
+                        (unsigned long)timing.writes, (unsigned long)timing.failures);
+  if (length > 0 && length < int(sizeof(line)) && Serial.availableForWrite() >= length)
+  {
+    Serial.write(reinterpret_cast<const uint8_t *>(line), length);
+    lastPwmTimingReport = now;
+    timing = PwmTiming();
+  }
+}
+
+static void reportMotionTiming()
+{
+  uint32_t now = millis();
+  if (uint32_t(now - lastTimingReport) < 5000)
+  {
+    return;
+  }
+  char line[128];
+  int length = snprintf(line, sizeof(line),
+                        "Motion us: avg=%lu max=%lu work=%lu late=%lu n=%lu\n",
+                        (unsigned long)motionTiming.average(), (unsigned long)motionTiming.maxGap,
+                        (unsigned long)motionTiming.maxWork, (unsigned long)motionTiming.late,
+                        (unsigned long)motionTiming.count);
+  if (length > 0 && length < int(sizeof(line)) && Serial.availableForWrite() >= length)
+  {
+    Serial.write(reinterpret_cast<const uint8_t *>(line), length);
+    lastTimingReport = now;
+    motionTiming = MotionTiming();
+  }
+}
+#endif
 float timeStep = 0;
 
 // Per-leg tables follow the IDs, servo channels, and sensors: RF, RM, RR, LF, LM, LR.
@@ -711,23 +790,19 @@ void doBodyFK(short PosX, short PosZ, short PosY, short RotationY, byte BodyIKLe
   // With IMU balance disabled these values still enter FK; initialize them to avoid arbitrary foot
   // targets.
   float bodyBalance[3] = {0.0f, 0.0f, 0.0f};
-  float tempBodyBalance[3];
+  const float *correction = kinematicsBodyBalance;
 #ifdef FOOT_SENSOR_WALK_ENABLED
   if (walkingFootTargets)
   {
     // Reuse one frozen IMU correction for all feet so a contact transaction does not move the body
     // beneath them.
-    memcpy(tempBodyBalance, walkingBodyBalance, sizeof(tempBodyBalance));
+    correction = walkingBodyBalance;
   }
-  else
 #endif
-  {
-    pid_update(tempBodyBalance, 3);
-  }
 #ifdef MPU_ENABLED
   if (bBodyBalanceMode)
   {
-    memcpy(bodyBalance, tempBodyBalance, 3 * sizeof(tempBodyBalance[0]));
+    memcpy(bodyBalance, correction, sizeof(bodyBalance));
   }
 #endif // MPU_ENABLED
 
@@ -881,13 +956,13 @@ void limitAngles(void)
 #ifndef CALIBRATION_ENABLED
     coxaAngle[legNr] = _min(_max(coxaAngle[legNr], (short)pgm_read_word(&cCoxaMin1[legNr])),
                             (short)pgm_read_word(&cCoxaMax1[legNr])) +
-                       (short)pgm_read_word(&CoxaAngleOffset[legNr]);
+                       calibration_offset(legNr, COXA);
     femurAngle[legNr] = _min(_max(femurAngle[legNr], (short)pgm_read_word(&cFemurMin1[legNr])),
                              (short)pgm_read_word(&cFemurMax1[legNr])) +
-                        (short)pgm_read_word(&FemurAngleOffset[legNr]);
+                        calibration_offset(legNr, FEMUR);
     tibiaAngle[legNr] = _min(_max(tibiaAngle[legNr], (short)pgm_read_word(&cTibiaMin1[legNr])),
                              (short)pgm_read_word(&cTibiaMax1[legNr])) +
-                        (short)pgm_read_word(&TibiaAngleOffset[legNr]);
+                        calibration_offset(legNr, TIBIA);
 #else
     coxaAngle[legNr] = servoOffsets[legNr][COXA];
     femurAngle[legNr] = servoOffsets[legNr][FEMUR];
@@ -1084,6 +1159,18 @@ void updateServoAngle(byte legNr)
 void controlLegs()
 {
   servoOutputTime = millis();
+  // Contact walking already schedules accepted frames; never skip a committed landing frame.
+  if (!walkingFootTargets &&
+      !servoFrameClock.ready(servoOutputTime, (1000U + PWM_FREQ - 1) / PWM_FREQ))
+  {
+    return;
+  }
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  motionTiming.begin(micros());
+  drvPwm_timing().beginPass();
+#endif
+  drvPwm_beginBatch();
+  bool outputChanged = false;
   // Keep the loop outside DEBUG_LEG branches so diagnostic builds still have a valid in-range leg
   // index.
   for (byte legNr = 0; legNr < NUM_OF_LEGS; legNr++)
@@ -1114,7 +1201,7 @@ void controlLegs()
     }
     if (coxa != previousCoxa || femur != previousFemur || tibia != previousTibia)
     {
-      lastServoChange = millis();
+      outputChanged = true;
     }
 
 #else  // DEBUG_LEG
@@ -1146,6 +1233,19 @@ void controlLegs()
     }
 #endif // DEBUG_LEG
   }
+  drvPwm_endBatch();
+  if (outputChanged)
+  {
+    // Final-frame settling starts after the staged commands reach the boards.
+    lastServoChange = millis();
+  }
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  drvPwm_timing().endPass();
+  motionTiming.end(micros());
+  reportMotionTiming();
+  reportPwmTiming();
+  reportImuTiming();
+#endif
 }
 
 bool servoTargetsReady()
@@ -1429,12 +1529,11 @@ bool walkingRecoveryPoseSafe(byte mask, bool support = false)
     short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
     const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
     const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
-    const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
     for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
       safe &= angles[joint] > (short)pgm_read_word(&mins[joint][leg]) + 50 &&
               angles[joint] < (short)pgm_read_word(&maxs[joint][leg]) - 50 &&
-              angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) > -850 &&
-              angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) < 850;
+              angles[joint] + calibration_offset(leg, joint) > -850 &&
+              angles[joint] + calibration_offset(leg, joint) < 850;
   }
   memcpy(coxaAngle, c, sizeof(c)); memcpy(femurAngle, f, sizeof(f));
   memcpy(tibiaAngle, t, sizeof(t)); memcpy(GaitPosY, y, sizeof(y));
@@ -2179,6 +2278,16 @@ void doBalance()
  */
 void doKinetic()
 {
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  uint32_t started = micros();
+#endif
+#ifdef FOOT_SENSOR_WALK_ENABLED
+  if (!walkingFootTargets)
+#endif
+  {
+    // One IMU/PID snapshot per pose, including while correction is disabled.
+    pid_update(kinematicsBodyBalance, 3);
+  }
   // Do IK for all Right legs
   for (byte legNr = 0; legNr < NUM_LEGS_PER_SIDE; ++legNr)
   {
@@ -2200,6 +2309,9 @@ void doKinetic()
             legPosY[legNr] + bodyPosY - BodyFKPosY + GaitPosY[legNr] - TotalTransY,
             legPosZ[legNr] + bodyPosZ - BodyFKPosZ + GaitPosZ[legNr] - TotalTransZ, legNr);
   }
+#if BUILDCFG_MOTION_TIMING_ENABLED
+  kinematicsTiming.record(uint32_t(micros() - started));
+#endif
 }
 
 /**
@@ -2317,11 +2429,10 @@ bool footTestMove(byte leg, short y)
   short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
   const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
   const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
-  const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
   for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
   {
     int angle = angles[joint];
-    int corrected = angle + (short)pgm_read_word(&offsets[joint][leg]);
+    int corrected = angle + calibration_offset(leg, joint);
     if (angle < (short)pgm_read_word(&mins[joint][leg]) ||
         angle > (short)pgm_read_word(&maxs[joint][leg]) || corrected < -900 || corrected > 900)
     {
@@ -2346,13 +2457,14 @@ bool footTestMove(byte leg, short y)
 void setup()
 {
 #if defined(DEBUG) || defined(CALIBRATION_ENABLED) || defined(FOOT_SENSOR_ENABLED) ||              \
-    defined(HTTP_ENABLED)
+    defined(HTTP_ENABLED) || BUILDCFG_MOTION_TIMING_ENABLED
   Serial.begin(115200);
 #endif
 #ifdef DEBUG
   Serial.println("START: setup");
 #endif
   Wire.begin(SDA_PIN, SCL_PIN);
+  calibration_init();
 
 #if !defined(CALIBRATION_ENABLED) && !defined(FOOT_SENSOR_TEST_ENABLED)
   // Isolated testing must not start networking, IMU control, or unrelated motion-producing
@@ -2396,10 +2508,12 @@ void setup()
   // command.
   footSensorTest_init(footTestMove);
 #else
+  doKinetic();
   limitAngles();
   for (int i = 500; i > 0; i--)
   {
     controlLegs();
+    delay(1);
   }
   delay(200);
   //  after motor init to calibrate the sensor
@@ -2435,9 +2549,6 @@ void contactWalking()
   static uint32_t lastStep = 0;
   static uint32_t stepDuration = 0;
   static uint32_t lastOutput = 0;
-  static uint32_t lastPowerCheck = 0;
-  static bool powerSampled = false;
-  static bool powerOk = false;
   static long stepStartX[NUM_OF_LEGS], stepStartZ[NUM_OF_LEGS];
   static long stepStartRotation[NUM_OF_LEGS];
   uint32_t now = millis();
@@ -2445,15 +2556,8 @@ void contactWalking()
   {
     return;
   }
-  if (!powerSampled || uint32_t(now - lastPowerCheck) >= 100)
-  {
-    // Rate-limit synchronous ADC work without dropping the power check from walking/bypass motion.
-    powerSampled = true;
-    lastPowerCheck = now;
-    powerOk = battMan_isPowerOk();
-  }
   footSensor_update();
-  if (!powerOk)
+  if (!battMan_isPowerOk())
   {
     footLanding_fail("battery check failed", NUM_OF_LEGS, FOOT_FAULT_POWER);
     return;
@@ -3094,14 +3198,13 @@ void contactWalking()
     short angles[] = {coxaAngle[leg], femurAngle[leg], tibiaAngle[leg]};
     const short *mins[] = {cCoxaMin1, cFemurMin1, cTibiaMin1};
     const short *maxs[] = {cCoxaMax1, cFemurMax1, cTibiaMax1};
-    const short *offsets[] = {CoxaAngleOffset, FemurAngleOffset, TibiaAngleOffset};
     for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
     {
       if (limitLeg == NUM_OF_LEGS &&
           (angles[joint] < (short)pgm_read_word(&mins[joint][leg]) ||
            angles[joint] > (short)pgm_read_word(&maxs[joint][leg]) ||
-           angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) < -900 ||
-           angles[joint] + (short)pgm_read_word(&offsets[joint][leg]) > 900))
+           angles[joint] + calibration_offset(leg, joint) < -900 ||
+           angles[joint] + calibration_offset(leg, joint) > 900))
       {
         limitLeg = leg;
         limitReason = "walking joint limit";
@@ -3303,6 +3406,7 @@ const char *webResetReason()
 
 void webService()
 {
+  static bool firstControlEnable = true;
   // Apply HTTP commands on the motion thread, not the server task, so gait and servo state have one
   // writer.
   if (webArmed && webControl_expired())
@@ -3363,6 +3467,16 @@ void webService()
       }
       else if (!webDisablePending)
       {
+        if (firstControlEnable && !bHexON && !footSensorBypass && !footWalkingEnabled &&
+            footRecovery == RECOVERY_IDLE && OperationMode == MODE_WALK && SelectedLeg == 255 &&
+            g_BodyYOffset == 0 && g_BodyYShift == 0 && bodyPosY == 0 && gaitAtRest())
+        {
+          g_BodyYOffset = (short)pgm_read_byte(&g_abHexMaxBodyY[1]) - CHexInitY;
+          bodyPosY = g_BodyYOffset;
+          updateCreepProfile();
+          adjustLegPosToBodyHeight();
+        }
+        firstControlEnable = false;
         webArmed = true;
         bHexON = true;
         if (footSensorBypass)
@@ -3566,16 +3680,9 @@ void webService()
     webDisablePending = false;
   }
   static uint32_t lastStatus;
-  static uint32_t lastBattery;
-  static float cell1, cell2;
+  float cell1, cell2;
   uint32_t now = millis();
-  if (uint32_t(now - lastBattery) >= 1000)
-  {
-    // Sample I2C on this thread; HTTP handlers read the cache instead of competing for the bus.
-    lastBattery = now;
-    battMan_getVoltages(&cell1, &cell2);
-    http_setVoltages(cell1, cell2);
-  }
+  battMan_getVoltages(&cell1, &cell2);
   if (uint32_t(now - lastStatus) >= 200)
   {
     // Report accepted runtime state and rejection/fault reasons so a blocked robot does not look
@@ -3621,7 +3728,7 @@ void webService()
                                   : "UNKNOWN";
     status["fault"] = footLanding_reason();
     status["result"] = webResult;
-    if (isfinite(cell1) && isfinite(cell2) && lastBattery)
+    if (isfinite(cell1) && isfinite(cell2))
     {
       status["cell1"] = cell1;
       status["cell2"] = cell2;
@@ -3641,8 +3748,39 @@ void webService()
 }
 #endif
 
+static void serviceBattery()
+{
+  battMan_update();
+#ifdef HTTP_ENABLED
+  float cell1, cell2;
+  battMan_getVoltages(&cell1, &cell2);
+  http_setVoltages(cell1, cell2);
+#endif
+}
+
+static void calibrationMove(byte leg, byte joint, short offset)
+{
+  servoMotion[leg].cancel();
+  if (joint == COXA) coxaAngleTemp[leg] = offset;
+  else if (joint == FEMUR) femurAngleTemp[leg] = offset;
+  else tibiaAngleTemp[leg] = offset;
+  servo_setAngle(leg, joint, leg < NUM_LEGS_PER_SIDE ? -offset : offset);
+}
+
 void loop()
 {
+#if !defined(FOOT_SENSOR_TEST_ENABLED) && !defined(CALIBRATION_ENABLED) &&                       \
+    (defined(HTTP_ENABLED) || defined(CAMERA_ENABLED))
+  // Acknowledge OTA before sampling: flash stalls must not become battery timeout alarms.
+  wifi_update(!bHexON && !webArmed && !calibration_busy());
+  if (ota_locked())
+  {
+    return;
+  }
+#endif
+#ifndef FOOT_SENSOR_TEST_ENABLED
+  serviceBattery();
+#endif
 #ifdef FOOT_SENSOR_ENABLED
   footSensor_update();
 #endif
@@ -3654,11 +3792,19 @@ void loop()
 #endif
 #ifndef CALIBRATION_ENABLED
 #if defined(HTTP_ENABLED) || defined(CAMERA_ENABLED)
-  wifi_update(!bHexON && !webArmed);
-  if (ota_locked())
+#ifdef HTTP_ENABLED
+  bool calibrationActive = calibration_update(!bHexON && !webArmed, calibrationMove);
+  if (calibrationActive || calibration_busy())
   {
+#ifdef WEB_CONTROLLER_ENABLED
+    WebCommand discarded;
+    webControl_take(discarded);
+#endif
+    byte discardedLegacy[7];
+    http_takeInput(discardedLegacy);
     return;
   }
+#endif
 #endif
 #ifdef WEB_CONTROLLER_ENABLED
   webService();
@@ -3779,6 +3925,11 @@ void loop()
 
       do
       {
+        serviceBattery();
+        if (!battMan_isPowerOk())
+        {
+          break;
+        }
 #ifdef WEB_CONTROLLER_ENABLED
         webService();
         if (webStopHold || !bHexON)
@@ -3790,6 +3941,7 @@ void loop()
         footSensor_update();
 #endif
         controlLegs();
+        delay(1);
         // Wait the appropriate time, call any background process while waiting...
       } while (uint32_t(millis() - servoMoveStart) < stepMoveTime || !servoTargetsReady());
     }

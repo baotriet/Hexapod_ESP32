@@ -2,6 +2,7 @@
 #include "setup.h"
 #include "HexCfg.h"
 #include "webPage.h"
+#include "calibration.h"
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -136,6 +137,12 @@ static esp_err_t command(httpd_req_t *req)
     return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid client");
   }
   xSemaphoreTake(lock, portMAX_DELAY);
+  if (calibration_busy())
+  {
+    xSemaphoreGive(lock);
+    httpd_resp_set_status(req, "409 Conflict");
+    return jsonReply(req, "{\"code\":\"calibration\",\"error\":\"Calibration owns motion\"}");
+  }
   // Only one client/legacy transport owns movement; accepted commands renew a short watchdog lease.
   bool leased = uint32_t(millis() - lastCommand) < WEB_LEASE_MS;
   if ((legacyOwner || (owner && owner != client)) && leased)
@@ -231,7 +238,8 @@ bool webControl_claimLegacy()
   }
   xSemaphoreTake(lock, portMAX_DELAY);
   bool allowed =
-      (!owner || legacyOwner || uint32_t(millis() - lastCommand) >= WEB_LEASE_MS) && !ready;
+      (!owner || legacyOwner || uint32_t(millis() - lastCommand) >= WEB_LEASE_MS) && !ready &&
+      !calibration_busy();
   if (allowed)
   {
     legacyOwner = true;

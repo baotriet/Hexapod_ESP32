@@ -24,6 +24,10 @@
 // #define DEBUG_BATTERY
 // #define DEBUG_FOOT_SENSOR
 
+#ifndef BUILDCFG_MOTION_TIMING_ENABLED
+#define BUILDCFG_MOTION_TIMING_ENABLED 0
+#endif
+
 /**
  * @brief Enable Wi-Fi HTTP services for robot control and browser firmware updates.
  */
@@ -56,6 +60,14 @@
  * it is not automatically activated at boot.
  */
 #define FOOT_SENSOR_WALK_ENABLED
+/**
+ * @brief Apply software debounce to foot-contact readings.
+ * @details Set to 1 to require the configured stable contact/release interval.
+ * Default OFF (0) assumes the sensor hardware already debounces its output.
+ */
+#ifndef BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED
+#define BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED 0
+#endif
 /**
  * @brief Allow automatic slow-wave fallback when the selected gait cannot safely lift.
  * @details Set to 1 to enable, or 0 to wait for support without changing gait.

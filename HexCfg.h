@@ -90,7 +90,7 @@
 #define cLMCoxaAngle1 (0)    // Default Coxa setup angle, decimals = 1
 #define cLFCoxaAngle1 (-600) // Default Coxa setup angle, decimals = 1
 
-#define CHexInitXZ 40
+#define CHexInitXZ 35
 #define CHexInitXZCos60 ((int32_t)(CHexInitXZ * 0.5))   // cos(60) = .5
 #define CHexInitXZSin60 ((int32_t)(CHexInitXZ * 0.866)) // sin(60) = .866
 #define CHexInitY                                                                                  \

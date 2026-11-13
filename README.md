@@ -14,9 +14,114 @@
 - Hardware drivers, foot sensing/landing, HTTP transport, and the browser page
   remain in their existing modules.
 
-This separation changes code organization only, not startup, walking, safety
-checks, or timing. Host tests and simulation extract the actual functions from
+The separation itself changes code organization only. Host tests and simulation extract the actual functions from
 [Hex.cpp](Hex.cpp).
+
+## Motion timing and MG90S testing
+
+Normal servo output is scheduled at most once per 20 ms instead of letting bus
+traffic determine the loop-count-based smoother's speed. Contact walking keeps
+its existing accepted-frame scheduler and immediate contact placement. Startup
+still commands the folded home pose, with a 1 ms yield between positioning
+attempts. Gait waypoints, offsets, 50 Hz PWM, and I2C clock speed are unchanged.
+Only successful PWM writes are cached; stop, changed pulses, initialization,
+and sleep invalidation still issue the required commands. Failed writes are
+reported and retried rather than cached.
+Each servo-output pass stages its commands, then writes consecutive changed
+channels in blocks of at most seven channels (29 bytes including the register
+pointer). Unchanged and unused channels break a block and are never overwritten.
+The installed PCA9685 library enables register auto-increment during frequency
+setup. For the current channel map, a fully changed 18-servo pose needs six
+transfers instead of 18; sparse changes may use smaller blocks. Failed or
+short-buffer transfers invalidate every affected channel so the next accepted
+pose retries them. Transfers are not atomic across boards, and a bus failure
+can leave a partially applied pose. Calibration and stop commands outside a
+servo-output pass remain immediate single-channel writes.
+
+Battery sampling starts a two-channel ADS1115 pair every 100 ms, without waiting
+for conversion completion. Battery protection and all HTTP consumers share the
+same complete pair; HTTP handlers never access I2C. Existing voltage thresholds
+and stability checks remain, and only new pairs enter the stability history.
+No complete pair, a conversion/bus error, or readings older than 500 ms block
+motion. A conversion has a 50 ms deadline. Unavailable voltages are omitted
+from controller status; `/battInfo` returns HTTP 503. A fresh successful pair
+clears the ADC-data fault, but does not release a contact-walking HOLD.
+I2C transactions themselves still take time and can time out on a faulty bus.
+The control loop acknowledges an OTA request before battery or foot-sensor
+servicing. Once OTA locks motion, both are suspended until reset, including after
+a failed transfer. Flash stalls therefore do not trigger ADC timeout/staleness
+buzzer alarms. Rejected OTA requests leave normal battery protection running.
+Restart initializes sampling normally; this does not silence an existing
+low-voltage alarm or change voltage thresholds.
+
+The default [PlatformIO build](../platformio.ini) enables
+`BUILDCFG_MOTION_TIMING_ENABLED=1`. Servo output emits at most one short Serial
+summary of each type at most every five seconds, and only when the UART has
+space for the whole line:
+
+```text
+Motion us: avg=20000 max=23000 work=8500 late=0 n=249
+PWM us: avg=540 max=800 passAvg=6000 passMax=8500 writes=2800 fail=0
+```
+
+These numbers are illustrative, not measured robot results. `avg`/`max` are
+intervals between output passes, `work` is the longest pass, `late` counts gaps
+over 25000 microseconds, and `n` counts intervals. Skipped diagnostic messages
+do not wait for UART space. These statistics measure software command timing,
+not physical servo position or the PCA9685's actual pulse edges. Ignore the first
+window after startup, an idle period, or HOLD when comparing continuous walking.
+Set the build flag to `0` to disable these summaries.
+
+The `PWM us:` line times actual single-channel `setPWM` calls or block transfers,
+after the cache check and
+before any error logging. `avg`/`max` measure one write, `passAvg`/`passMax`
+measure the sum of write times in one servo-output pass (including zero-write
+passes), `writes` counts attempts, and `fail` counts failed attempts. Cached or
+invalid commands are not write attempts. A block is one attempt regardless of
+its channel count, so per-write averages are not directly comparable with
+pre-batching firmware; use `passAvg`/`passMax` and Motion intervals instead.
+Direct calibration/stop writes enter
+the write statistics but not the per-pass totals. Clock subtraction handles
+`micros()` rollover. The two summary types have independent UART-space checks
+and reporting windows, so compare steady trials rather than treating adjacent
+lines as exactly matched frames. Compare `passMax` with Motion `work`: a similar
+value suggests PWM/I2C calls consume most of the output pass. No timing is printed
+after individual writes. This does not change servo commands or I2C speed.
+
+`IMU/IK us:` reports `imuAvg`/`imuMax` for an entire PID update (MPU read,
+angle access, and three PID calculations, excluding debug printing), and
+`calls` counts those updates. `ikAvg`/`ikMax` time one complete six-leg
+`doKinetic()` call, including any IMU updates inside it; `ikN` counts those
+calls. Do not add IMU and IK times together: they overlap. Ordinary kinematics
+samples IMU/PID once at the start of `doKinetic()`, even when browser IMU
+correction is off, and all six legs use that snapshot. Previously each leg
+sampled separately. Enabled correction intentionally uses one coherent pose
+snapshot instead of six potentially different readings; manual rotations,
+degree conversion, and PID settings are unchanged. Contact walking still
+samples outside `doKinetic()` and reuses its existing cached corrections inside
+it. Expect `calls / ikN` near one in steady ordinary walking, not six; contact
+walking and other kinematics callers can produce a different ratio.
+The IMU/IK line uses its own five-second UART-space gate and resets both
+statistics only after a successful report. Gait and sensor enable behavior
+are unchanged. Compare steady windows and ignore startup/idle transitions.
+
+1. Support the robot securely. Upload over USB/programming adapter, keeping the
+   servos on their normal external supply; USB must not power all 18 servos.
+2. Open Serial at 115200 baud and control over Wi-Fi. Use the same gait, height,
+   lift, travel input, and speed for each trial.
+3. Walk steadily for at least 15 seconds, comparing camera off/on and foot
+   protection off/on. Save timing lines and note any visible hesitation or
+   protection/recovery messages. Fewer late frames do not prove smooth mechanics.
+4. If hesitation remains under load, measure servo supply voltage during motion
+   and check wiring, binding, and torque. Keep PWM at 50 Hz and do not alter
+   calibration offsets as a timing fix.
+
+Run `powershell -ExecutionPolicy Bypass -File test\motion\run.ps1` for the actual
+ADC/battery/PWM drivers with simulated I2C, including errors, stale readings,
+stop/re-enable, retries, timing thresholds, and clock rollover. Run
+`powershell -ExecutionPolicy Bypass -File test\web_controller\run.ps1` for
+motion-scheduler and controller regressions, and `pio run` to build firmware.
+Hardware timing and MG90S response still require the trials above.
 
 ## Source formatting
 
@@ -112,9 +217,10 @@ This adds 0.9 seconds to startup and does not run in isolated foot-test mode.
    hotspot stays available if the router is absent. On the hotspot open
    `http://192.168.4.1/`; on the router use the address printed on Serial.
    If a phone reports no internet, choose to stay connected.
-5. Click **Control** to enable, select a standing height (start with supported
-   56 mm, or previously validated supported creep at 45 mm), and check actual
-   robot state before moving. Foot protection remains OFF until selected.
+5. Support the robot, then click **Control** to enable. The first normal enable
+   after power-on selects the 56 mm standing preset and moves toward it.
+   Check actual robot state before moving; select another validated height if
+   desired. Foot protection remains OFF until selected.
 
 No Wi-Fi credentials are compiled into this firmware. Before provisioning,
 there is no intentionally open hotspot or default password. The web server
@@ -126,6 +232,28 @@ network can operate it after obtaining the controller lease. Use trusted
 private networks only; do not forward ports 80/81 to the internet. The control
 API rejects browser cross-origin JSON commands; this is not a substitute for
 network access control.
+
+### Servo calibration
+
+Support the robot securely, keep clear of the joints, disable Control and wait
+for motion to stop. Open **Servo calibration** from the controller. Start
+calibration, select one leg (RF, RM, RR, LF, LM, LR) and joint, enter an offset
+from -30 to 30 degrees in 0.1-degree steps, and explicitly move that servo to
+its zero reference plus the offset. Adjust until the physical zero is correct.
+Only the selected servo moves; selecting a different servo does not move it.
+
+**Save all offsets** writes the staged values to the ESP32's EEPROM emulation
+in flash and applies them to subsequent motion. **End calibration** discards
+unsaved changes. Normal control and firmware updates are blocked during
+calibration. If the page disconnects, reopen it to end calibration; a reset
+also ends it but runs the normal startup positioning. Support the robot before
+ending calibration or re-enabling control.
+
+The saved offsets are loaded before startup positioning and used for motion
+and servo-limit checks. On first boot or if the stored record is invalid, the
+existing offsets in [HexCfg.h](HexCfg.h) are used; storage failures are reported
+on Serial and a failed save is reported on the page. A full flash erase removes
+the saved calibration.
 
 ### Changing router and hotspot settings
 
@@ -213,6 +341,10 @@ hiding and other focus loss still request disable.
 The single **Control** button toggles enable/disable: green means this page
 has requested control and the robot confirms it is armed; dark means not armed.
 Its label stays fixed. Disabling preserves controlled stopping and servo torque.
+The first normal enable from a settled, folded startup pose selects the 56 mm
+standing preset. Subsequent enables preserve the current height and pose,
+including after sensor-bypass recovery; an already-active or non-startup pose
+is not reset by the first browser enable.
 Camera sits beside Control, with STOP on the same compact command row.
 
 The page exposes operation mode, all six gaits, standing-height presets,
@@ -262,8 +394,9 @@ travel or pressing STOP likewise finishes recentering without restarting swings.
 
 The web **Foot sensor** button enables only with centered inputs, a settled
 gait, WALK mode, a standing height above the folded pose, no selected single
-leg, valid sensor mapping, and a usable support polygon from debounced CONTACT
-readings. Four or five well-distributed contacts can pass; contact count alone
+leg, valid sensor mapping, and a usable support polygon from stable CONTACT
+readings (hardware-debounced by default; software debounce is optional). Four
+or five well-distributed contacts can pass; contact count alone
 is not sufficient. Otherwise it
 stays dark and the status message asks you to check the sensors/settings.
 Recheck the named contacts and click again after correcting the issue;
@@ -534,8 +667,10 @@ to reach output; it no longer causes a separate HOLD after 200 ms.
 Persistent missing contacts still end in HOLD at the search timeout; faulty
 switches are not silently treated as load-bearing feet.
 
-On lift-off a foot must demonstrate
-stable release; a switch stuck pressed is not accepted as touchdown.
+On lift-off a foot must demonstrate stable release; a switch stuck pressed is
+not accepted as touchdown. Stable readings use hardware debounce by default;
+set `BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED` to `1` in [setup.h](setup.h) to
+add software debounce.
 Descending gait segments interpolate toward the planned Y over the step
 duration, including the first 50 Hz PWM frame on the initial descent output;
 this avoids waiting for an extra scheduler cycle before the feet begin lowering.
@@ -543,12 +678,13 @@ Already-confirmed contact still prevents that initial advance. After a previousl
 released switch first reports raw contact, the
 foot enters slow seating: at most `FOOT_WALK_SEAT_MM = 2` additional millimeters
 at `FOOT_WALK_SEAT_MM_S = 2` mm/s, in 1 mm increments every 500 ms. Stable contact
-stops seating immediately and latches the height; a switch that stabilizes
-during the normal 15 ms debounce receives no extra seating movement.
+stops seating immediately and latches the height; when software debounce is
+enabled, contact that stabilizes during the 15 ms debounce receives no extra
+seating movement.
 This is not a forced 2 mm push after every touchdown. Bounce does not restart
 the seating distance/time budget. If contact does not stabilize within the
-seating duration plus debounce allowance, the robot enters sensor HOLD rather
-than continuing downward or automatically reversing. Seating remains bounded
+seating duration plus any enabled debounce allowance, the robot enters sensor
+HOLD rather than continuing downward or automatically reversing. Seating remains bounded
 by the existing target-plus-10 mm search ceiling and search timeout, and every
 output still passes workspace and joint checks; new swings require support.
 A switch that never
@@ -563,8 +699,8 @@ at `FOOT_WALK_SEARCH_MM_S = 10`, with an extra-distance ceiling of
 `FOOT_WALK_EXTRA_DOWN_MM = 10` and `FOOT_WALK_TIMEOUT_MS = 2000`
 (seating: `FOOT_WALK_SEAT_MM = 2` at `FOOT_WALK_SEAT_MM_S = 5`). These are
 starting values for MG90S servos: 10 mm/s keeps each 1 mm step (100 ms) longer
-than contact detection (5 ms sample + 15 ms debounce + 20 ms output frame), so
-overtravel after touchdown stays within about 1 mm. Keep the timeout at least
+than contact detection (5 ms sample + optional 15 ms software debounce + 20 ms
+output frame), so overtravel after touchdown stays within about 1 mm. Keep the timeout at least
 `EXTRA_DOWN_MM / SEARCH_MM_S` seconds.
 The timeout is measured from commanded nominal arrival, NOT measured servo
 arrival. At 10 mm/s the 10 mm search takes about one second; scheduling/contact
@@ -738,9 +874,9 @@ The PWM drivers are initialized, but no servo targets
 are issued until an accepted `POSITION` command. Support the body securely;
 do not rely on the other five legs to hold it.
 
-After mapping, debounced changes print once as `RF: CONTACT` or `RF: RELEASED`.
+After mapping, stable-state changes print once as `RF: CONTACT` or `RF: RELEASED`.
 Send `STATUS` to see all six named contact states. An invalid/unconfigured
-mapping instead reports raw and debounced physical bits in P05..P00 order
+mapping instead reports raw and stable physical bits in P05..P00 order
 (leading zeros are omitted). Press each physical switch, then fill in its named
 `FOOT_SENSOR_*_PIN` macro using bit numbers 0..5. Use -1 for an unknown input.
 The verified physical assignments are RF=P00, RM=P01, RR=P02, LF=P05,
@@ -748,10 +884,13 @@ LM=P04, LR=P03. The mapped mask uses configured leg indices:
 RF=0, RM=1, RR=2, LF=3, LM=4, LR=5.
 All six assignments must be valid and unique before motion is allowed.
 
-Polling is requested every 5 ms, with 15 ms contact/release debounce. These
-are software targets, not hard real-time guarantees. I2C reads, Serial output,
-and the normal walking loop can delay samples. Periodic diagnostics are off
-by default; contact/release events are still printed. Enable `DEBUG_FOOT_SENSOR` in
+Polling is requested every 5 ms. Software debounce is off by default because
+the sensors already provide hardware debounce; set
+`BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED` to `1` in
+[setup.h](setup.h) to require 15 ms of stable contact and release readings.
+These are software targets, not hard real-time guarantees. I2C reads, Serial
+output, and the normal walking loop can delay samples. Periodic diagnostics are
+off by default; contact/release events are still printed. Enable `DEBUG_FOOT_SENSOR` in
 [setup.h](setup.h) to print them every 500 ms instead.
 The PCF8575 library read does not provide a separate bus-error status;
 these switches are not a safety-rated interlock.
@@ -794,9 +933,9 @@ PlatformIO monitor, Ctrl+T followed by Ctrl+E also toggles local echo.
    rate. Below the configured ground reference it continues into bounded search.
 5. `STOP`: stop generating new targets and hold the last commanded pose.
 
-Raw contact immediately pauses further target increments. Debounced contact
-enters `CONTACT`; no additional descent is generated. If contact bounces away,
-descent resumes only after stable release, without a catch-up jump. Reaching
+Raw contact immediately pauses further target increments. Stable contact enters
+`CONTACT`; no additional descent is generated. If contact bounces away, descent
+resumes only after stable release, without a catch-up jump. Reaching
 the distance/timeout bound without contact enters `NO_GROUND`. Joint rejection
 enters `FAULT`. These terminal states hold the last
 target; none automatically lifts, reverses, or removes servo torque.

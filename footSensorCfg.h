@@ -22,7 +22,7 @@
 #define FOOT_SENSOR_LR_PIN 0
 #endif
 
-// Debounce contact and release separately so switch bounce cannot fake touchdown or lift-off.
+// Software debounce intervals, used when BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED is 1.
 #define FOOT_SENSOR_SAMPLE_MS 5
 #define FOOT_SENSOR_CONTACT_MS 15
 #define FOOT_SENSOR_RELEASE_MS 15

@@ -419,7 +419,9 @@ void footLanding_update()
       // Never restart this budget on bounce or catch up missed output frames with a larger step.
       const uint32_t seatStepMs = (1000U + FOOT_WALK_SEAT_MM_S - 1) / FOOT_WALK_SEAT_MM_S;
       const uint32_t seatTimeout =
-          FOOT_WALK_SEAT_MM * seatStepMs + FOOT_SENSOR_CONTACT_MS + FOOT_SENSOR_SAMPLE_MS;
+          FOOT_WALK_SEAT_MM * seatStepMs +
+          (BUILDCFG_FOOT_SENSOR_DEBOUNCE_ENABLED ? FOOT_SENSOR_CONTACT_MS : 0U) +
+          FOOT_SENSOR_SAMPLE_MS;
       if (uint32_t(now - s.seatStarted) > seatTimeout)
       {
         footLanding_fail("contact did not stabilize within seating limit", leg);

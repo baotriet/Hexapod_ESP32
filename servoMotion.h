@@ -3,6 +3,25 @@
 
 #include <stdint.h>
 
+class ServoFrameClock
+{
+public:
+  bool ready(uint32_t now, uint32_t interval)
+  {
+    if (sampled && uint32_t(now - last) < interval)
+    {
+      return false;
+    }
+    sampled = true;
+    last = now;
+    return true;
+  }
+
+private:
+  uint32_t last = 0;
+  bool sampled = false;
+};
+
 class ServoMotion
 {
 public:

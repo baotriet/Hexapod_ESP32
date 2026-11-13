@@ -9,6 +9,10 @@
 #define DRV_PWM_H_
 
 #include "setup.h"
+#if BUILDCFG_MOTION_TIMING_ENABLED
+#include "motionTiming.h"
+PwmTiming &drvPwm_timing();
+#endif
 
 /**
  * @brief init function
@@ -24,6 +28,8 @@ void drvPwm_init();
  * @param pwmPulse  mapped angle
  */
 void drvPwm_set(uint16_t addr, byte channel, int pwmPulse);
+void drvPwm_beginBatch();
+void drvPwm_endBatch();
 
 /**
  * @brief put PCA9685 to sleep
