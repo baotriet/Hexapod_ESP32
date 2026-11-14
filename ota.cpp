@@ -3,6 +3,7 @@
 #include <Update.h>
 #include <atomic>
 #include "esp_ota_ops.h"
+#include "serialOutput.h"
 
 enum class OtaState { IDLE, REQUESTED, REJECTED, LOCKED };
 static std::atomic<OtaState> state{OtaState::IDLE};

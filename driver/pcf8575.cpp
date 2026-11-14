@@ -3,6 +3,7 @@
 #include "pcf8575.h"
 #include "setup.h"
 #include "Wire.h"
+#include "serialOutput.h"
 
 Adafruit_PCF8575 pcf;
 

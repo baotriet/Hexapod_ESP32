@@ -24,6 +24,7 @@
 #include "webControl.h"
 #include <WiFi.h>
 #include <esp_system.h>
+#include <esp_log.h>
 
 #if defined(FOOT_SENSOR_WALK_ENABLED) && !defined(FOOT_SENSOR_ENABLED)
 #error "Contact-aware walking requires FOOT_SENSOR_ENABLED"
@@ -37,6 +38,7 @@
 #include "driver/ads1115.h"
 #include "driver/pcf8575.h"
 #include "driver/drvPwm.h"
+#include "serialOutput.h"
 
 // Runtime state and per-leg geometry
 
@@ -2675,6 +2677,10 @@ bool footTestMove(byte leg, short y)
  */
 void setup()
 {
+#if !BUILDCFG_SERIAL_OUTPUT_ENABLED
+  esp_log_level_set("*", ESP_LOG_NONE);
+  Serial.setDebugOutput(false);
+#endif
 #if defined(DEBUG) || defined(CALIBRATION_ENABLED) || defined(FOOT_SENSOR_ENABLED) ||              \
     defined(HTTP_ENABLED) || BUILDCFG_MOTION_TIMING_ENABLED
   Serial.begin(115200);
@@ -3977,13 +3983,17 @@ static void serviceBattery()
 #endif
 }
 
-static void calibrationMove(byte leg, byte joint, short offset)
+static CalibrationMoveResult calibrationMove(byte leg, byte joint, short offset)
 {
+  if (!battMan_isPowerOk())
+    return CalibrationMoveResult::POWER_UNAVAILABLE;
+  if (!servo_setAngleImmediate(leg, joint, leg < NUM_LEGS_PER_SIDE ? -offset : offset))
+    return CalibrationMoveResult::PWM_ERROR;
   servoMotion[leg].cancel();
   if (joint == COXA) coxaAngleTemp[leg] = offset;
   else if (joint == FEMUR) femurAngleTemp[leg] = offset;
   else tibiaAngleTemp[leg] = offset;
-  servo_setAngle(leg, joint, leg < NUM_LEGS_PER_SIDE ? -offset : offset);
+  return CalibrationMoveResult::OK;
 }
 
 void loop()

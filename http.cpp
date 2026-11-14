@@ -11,6 +11,7 @@
 #include "ota.h"
 #include "calibration.h"
 #include <math.h>
+#include "serialOutput.h"
 
 static bool httpDataReady = false;
 static byte httpInputData[7];

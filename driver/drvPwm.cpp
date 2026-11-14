@@ -2,6 +2,7 @@
 #include <Adafruit_PWMServoDriver.h>
 #include "HexCfg.h"
 #include <Wire.h>
+#include "serialOutput.h"
 
 Adafruit_PWMServoDriver pwmRight = Adafruit_PWMServoDriver(R_DRIVER);
 Adafruit_PWMServoDriver pwmLeft = Adafruit_PWMServoDriver(L_DRIVER);
@@ -44,25 +45,22 @@ void drvPwm_goSleep()
   pwmLeft.sleep();
 }
 
-void drvPwm_set(uint16_t addr, byte channel, int pwmPulse)
+static bool validCommand(uint16_t addr, byte channel, int pwmPulse)
 {
   if ((addr != R_DRIVER && addr != L_DRIVER) || channel >= 16 || pwmPulse < 0 ||
       pwmPulse > 4096)
   {
     Serial.println(F("Servo PWM: invalid address, channel, or pulse."));
-    return;
+    return false;
   }
-  byte driver = addr == R_DRIVER ? 0 : 1;
-  if (batching)
-  {
-    queuedPulse[driver][channel] = pwmPulse;
-    queued[driver][channel] = !pulseValid[driver][channel] ||
-                              lastPulse[driver][channel] != pwmPulse;
-    return;
-  }
+  return true;
+}
+
+static bool writeImmediate(byte driver, byte channel, int pwmPulse)
+{
   if (pulseValid[driver][channel] && lastPulse[driver][channel] == pwmPulse)
   {
-    return;
+    return true;
   }
   Adafruit_PWMServoDriver &pwm = driver == 0 ? pwmRight : pwmLeft;
 #if BUILDCFG_MOTION_TIMING_ENABLED
@@ -73,6 +71,38 @@ void drvPwm_set(uint16_t addr, byte channel, int pwmPulse)
   pwmTiming.record(uint32_t(micros() - started), result != 0);
 #endif
   rememberWrite(driver, channel, pwmPulse, result == 0);
+  return result == 0;
+}
+
+bool drvPwm_setImmediate(uint16_t addr, byte channel, int pwmPulse)
+{
+  if (!validCommand(addr, channel, pwmPulse))
+  {
+    return false;
+  }
+  if (batching)
+  {
+    Serial.println(F("Servo PWM: immediate write rejected during batch."));
+    return false;
+  }
+  return writeImmediate(addr == R_DRIVER ? 0 : 1, channel, pwmPulse);
+}
+
+void drvPwm_set(uint16_t addr, byte channel, int pwmPulse)
+{
+  if (!validCommand(addr, channel, pwmPulse))
+  {
+    return;
+  }
+  byte driver = addr == R_DRIVER ? 0 : 1;
+  if (batching)
+  {
+    queuedPulse[driver][channel] = pwmPulse;
+    queued[driver][channel] = !pulseValid[driver][channel] ||
+                              lastPulse[driver][channel] != pwmPulse;
+    return;
+  }
+  writeImmediate(driver, channel, pwmPulse);
 }
 
 void drvPwm_beginBatch()

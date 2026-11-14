@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "serialOutput.h"
 
 // HTTP runs on another task: one locked mailbox avoids concurrent gait writes or a stale movement
 // queue.

@@ -22,6 +22,7 @@ flashing mode
 #include "img_converters.h"
 #include "fb_gfx.h"
 #include <WiFi.h>
+#include "serialOutput.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 

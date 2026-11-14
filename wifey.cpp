@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include "wifey.h"
 #include "ota.h"
+#include "serialOutput.h"
 
 // Track network-stack initialization separately from router connection; the hotspot can work
 // offline.

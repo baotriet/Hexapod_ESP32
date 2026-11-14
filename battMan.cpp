@@ -3,6 +3,7 @@
 #include "HexCfg.h"
 #include "battMan.h"
 #include <math.h>
+#include "serialOutput.h"
 
 static bool isSanityCheckOk(float cell1, float cell2);
 static float cachedCell1 = NAN, cachedCell2 = NAN, pendingCell1;

@@ -7,7 +7,8 @@
 void calibration_init();
 void calibration_register(httpd_handle_t server);
 bool calibration_busy();
-bool calibration_update(bool allowCalibration, void (*move)(byte, byte, short));
+enum class CalibrationMoveResult { OK, POWER_UNAVAILABLE, PWM_ERROR };
+bool calibration_update(bool allowCalibration, CalibrationMoveResult (*move)(byte, byte, short));
 short calibration_offset(byte leg, byte joint);
 
 #endif

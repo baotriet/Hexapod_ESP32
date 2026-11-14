@@ -1,6 +1,7 @@
 #include "HexCfg.h"
 #include "footSensor.h"
 #include "driver/pcf8575.h"
+#include "serialOutput.h"
 
 // Translate expander pins once so gait code and diagnostics always use physical leg indices.
 static const int sensorPins[NUM_OF_LEGS] = {FOOT_SENSOR_RF_PIN, FOOT_SENSOR_RM_PIN,

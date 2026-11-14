@@ -28,6 +28,8 @@ void drvPwm_init();
  * @param pwmPulse  mapped angle
  */
 void drvPwm_set(uint16_t addr, byte channel, int pwmPulse);
+// Immediate writes report I2C success and reject calls during a batch.
+bool drvPwm_setImmediate(uint16_t addr, byte channel, int pwmPulse);
 void drvPwm_beginBatch();
 void drvPwm_endBatch();
 

@@ -2,6 +2,7 @@
 #include "pid.h"
 #include "driver/mpu6050.h"
 #include "setup.h"
+#include "serialOutput.h"
 
 struct pidParam
 {

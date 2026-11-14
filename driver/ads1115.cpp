@@ -4,6 +4,7 @@
 #include "HexCfg.h"
 #include "ads1115.h"
 #include <math.h>
+#include "serialOutput.h"
 
 Adafruit_ADS1115 ads;
 static uint32_t conversionStarted;

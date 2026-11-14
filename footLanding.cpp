@@ -1,6 +1,7 @@
 #include "footLanding.h"
 #include "footSensor.h"
 #include <math.h>
+#include "serialOutput.h"
 
 enum LandingPhase
 {

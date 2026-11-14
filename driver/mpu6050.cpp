@@ -3,6 +3,7 @@
 #include "driver/mpu6050.h"
 #include "setup.h"
 #include "HexCfg.h"
+#include "serialOutput.h"
 
 MPU6050 mpu(Wire);
 

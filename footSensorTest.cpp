@@ -1,6 +1,7 @@
 #include "HexCfg.h"
 #include "footSensor.h"
 #include "footSensorTest.h"
+#include "serialOutput.h"
 
 #ifdef FOOT_SENSOR_TEST_ENABLED
 // Exclude other servo-driving modes so this test cannot unexpectedly move the remaining legs.

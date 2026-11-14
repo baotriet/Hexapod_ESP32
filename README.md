@@ -75,8 +75,19 @@ buzzer alarms. Rejected OTA requests leave normal battery protection running.
 Restart initializes sampling normally; this does not silence an existing
 low-voltage alarm or change voltage thresholds.
 
-The default [PlatformIO build](../platformio.ini) enables
-`BUILDCFG_MOTION_TIMING_ENABLED=1`. Servo output emits at most one short Serial
+The default [PlatformIO build](../platformio.ini) disables timing instrumentation
+(`BUILDCFG_MOTION_TIMING_ENABLED=0`) and all application Serial output
+(`BUILDCFG_SERIAL_OUTPUT_ENABLED=0`, `CORE_DEBUG_LEVEL=0`). Application print,
+formatted print, and byte-write calls are suppressed without disabling UART input.
+Serial provisioning still accepts complete lines, but prints no acknowledgement
+or errors; enable output before troubleshooting provisioning, Serial calibration,
+or the isolated foot test. Browser status, battery protection, buzzer behavior,
+and motion are unchanged. ESP-IDF runtime logs are disabled during setup.
+ROM/bootloader messages and low-level crash output can still appear at reset;
+no irreversible hardware/eFuse settings are changed.
+Set `BUILDCFG_SERIAL_OUTPUT_ENABLED=1` to restore application logs, and additionally
+set `BUILDCFG_MOTION_TIMING_ENABLED=1` to collect timing summaries.
+With both enabled, servo output emits at most one short Serial
 summary of each type at most every five seconds, and only when the UART has
 space for the whole line:
 
@@ -264,10 +275,16 @@ network access control.
 
 Support the robot securely, keep clear of the joints, disable Control and wait
 for motion to stop. Open **Servo calibration** from the controller. Start
-calibration, select one leg (RF, RM, RR, LF, LM, LR) and joint, enter an offset
+calibration: all 18 servos are immediately commanded to zero plus their saved
+offsets. The page shows saved and staged offsets for every leg and joint.
+Then select one leg (RF, RM, RR, LF, LM, LR) and joint, enter an offset
 from -30 to 30 degrees in 0.1-degree steps, and explicitly move that servo to
 its zero reference plus the offset. Adjust until the physical zero is correct.
-Only the selected servo moves; selecting a different servo does not move it.
+After the all-servo zero, only the selected servo moves when adjusted; selecting
+a different servo does not move it. Each move requires fresh, safe battery
+readings. If the initial zero fails partway, calibration remains locked and
+adjustment and saving are disabled; inspect the robot, then retry all-servo zero
+or end calibration. PWM failures leave physical positions unknown.
 
 **Save all offsets** writes the staged values to the ESP32's EEPROM emulation
 in flash and applies them to subsequent motion. **End calibration** discards

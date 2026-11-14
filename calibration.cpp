@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 #include <atomic>
+#include "serialOutput.h"
 
 namespace
 {
@@ -16,7 +17,7 @@ struct Record
   uint32_t checksum;
 };
 
-enum class Request { NONE, STATUS, ENTER, MOVE, SAVE, EXIT };
+enum class Request { NONE, STATUS, ENTER, ZERO, MOVE, SAVE, EXIT };
 enum class State { IDLE, REQUESTED, WORKING, DONE };
 std::atomic<State> state{State::IDLE};
 std::atomic<bool> active{false};
@@ -26,7 +27,8 @@ short requestOffset;
 short offsets[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
 short staged[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
 short snapshot[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
-bool snapshotActive, storageReady;
+bool snapshotActive, snapshotReady, zeroReady, storageReady;
+short savedSnapshot[NUM_OF_LEGS][NUM_SERVOS_PER_LEG];
 const char *result;
 
 uint32_t checksum(const Record &record)
@@ -56,24 +58,39 @@ bool valid(const Record &record)
 const char PAGE[] = R"HTML(<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Servo calibration</title><h1>Servo calibration</h1>
+<style>pre { white-space: pre-wrap; overflow-wrap: anywhere; }</style>
 <p>No authentication. Use a trusted private network only.</p>
 <p>Support the robot securely, clear obstructions, disable Control and close other control tabs.
-Each move immediately drives only the selected servo to its zero reference plus offset.
+Starting calibration immediately commands all 18 servos to zero plus their saved offsets.
+Afterward, each move commands only the selected servo to zero plus its adjusted offset.
+The firmware cannot verify the servo's physical position.
 Keep clear of moving joints. Resetting runs normal startup positioning.</p>
 <button id="enter" disabled>Start calibration</button>
+<button id="zero" disabled>Retry all-servo zero</button>
+<button id="exit" disabled>End calibration</button>
 <fieldset id="controls" disabled>
 <label>Leg <select id="leg"><option>RF</option><option>RM</option><option>RR</option>
 <option>LF</option><option>LM</option><option>LR</option></select></label>
 <label>Joint <select id="joint"><option>Coxa</option><option>Femur</option><option>Tibia</option></select></label>
 <label>Offset in degrees <input id="offset" type="number" min="-30" max="30" step="0.1"></label>
-<button id="move">Move selected servo</button><button id="save">Save all offsets</button>
-<button id="exit">End calibration</button></fieldset>
+<button id="move">Move selected servo</button><button id="save">Save all offsets</button></fieldset>
+<h2>Offsets (degrees)</h2><pre id="offsets">Loading...</pre>
 <p id="status" role="status">Loading offsets...</p><a href="/">Back to controller</a>
 <script>
 const $ = id => document.getElementById(id);
-let values = [], active = false, busy = false;
+let values = [], saved = [], active = false, ready = false, busy = false;
 function display() { if (values.length) $("offset").value = values[$("leg").selectedIndex][$("joint").selectedIndex] / 10; }
-function enabled(on) { active = on; $("controls").disabled = !on; $("enter").disabled = on; }
+function enabled(on, zeroed) {
+  active = on; ready = zeroed;
+  $("controls").disabled = !on || !zeroed;
+  $("enter").disabled = on; $("exit").disabled = !on; $("zero").disabled = !on;
+}
+function showOffsets() {
+  const legs = ["RF", "RM", "RR", "LF", "LM", "LR"], joints = ["Coxa", "Femur", "Tibia"];
+  $("offsets").textContent = legs.map((leg, i) => leg + ": " +
+    joints.map((joint, j) => joint + " saved " + (saved[i][j] / 10).toFixed(1) +
+      " / staged " + (values[i][j] / 10).toFixed(1)).join(", ")).join("\n");
+}
 async function call(action, extra = {}) {
   const response = await fetch("/api/calibration", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -87,21 +104,30 @@ async function refresh() {
   const response = await fetch("/api/calibration", {cache: "no-store"});
   const text = await response.text();
   if (!response.ok) throw Error(text);
-  const data = JSON.parse(text); values = data.offsets; enabled(data.active); display();
-  $("status").textContent = data.active ? "Calibration active. Unsaved changes are discarded on End." : "Ready. No servo moved.";
+  const data = JSON.parse(text); values = data.offsets; saved = data.saved;
+  enabled(data.active, data.ready); display(); showOffsets();
+  $("status").textContent = data.active ?
+    (data.ready ? "Calibration active. Unsaved changes are discarded on End." :
+      "All-servo zero incomplete. Inspect the robot, then retry or end calibration.") :
+    "Ready. No servo moved.";
 }
 async function run(action, extra) {
   if (busy) return;
   busy = true; $("enter").disabled = true; $("controls").disabled = true;
+  $("zero").disabled = true; $("exit").disabled = true;
   let uncertain = false;
-  try { const data = await call(action, extra); values = data.offsets; active = data.active; display();
+  try { const data = await call(action, extra); values = data.offsets; saved = data.saved;
+    active = data.active; ready = data.ready; display(); showOffsets();
     $("status").textContent = data.message;
   } catch (error) { uncertain = true; $("status").textContent = "Calibration failed: " + error.message +
       " The request may have taken effect; refresh before retrying."; }
-  finally { busy = false; if (!uncertain) enabled(active); }
+  finally { busy = false; if (!uncertain) enabled(active, ready); }
 }
 $("enter").onclick = () => {
-  if (confirm("Robot supported, Control disabled, and joints clear?")) return run("enter");
+  if (confirm("All 18 servos will move to zero plus saved offsets. Robot supported, Control disabled, and joints clear?")) return run("enter");
+};
+$("zero").onclick = () => {
+  if (confirm("All 18 servos will move to zero plus staged offsets. Robot supported and joints clear?")) return run("zero");
 };
 $("move").onclick = () => {
   const value = Number($("offset").value), tenths = Math.round(value * 10);
@@ -152,9 +178,11 @@ esp_err_t dispatch(httpd_req_t *req, Request next)
   }
   JsonDocument doc;
   doc["active"] = snapshotActive;
+  doc["ready"] = snapshotReady;
   doc["message"] = next == Request::SAVE ? "Offsets saved." :
-                   next == Request::MOVE ? "Selected servo moved; save to keep offsets." :
-                   next == Request::ENTER ? "Calibration active. Select and move one servo." :
+                   next == Request::MOVE ? "Servo target accepted; verify its position and save to keep offsets." :
+                   (next == Request::ENTER || next == Request::ZERO) ?
+                     "All servo targets accepted. Verify positions before adjusting." :
                    next == Request::EXIT ? "Calibration ended. Support robot before enabling Control." :
                    "Calibration status.";
   JsonArray rows = doc["offsets"].to<JsonArray>();
@@ -163,6 +191,13 @@ esp_err_t dispatch(httpd_req_t *req, Request next)
     JsonArray row = rows.add<JsonArray>();
     for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
       row.add(snapshot[leg][joint]);
+  }
+  JsonArray savedRows = doc["saved"].to<JsonArray>();
+  for (byte leg = 0; leg < NUM_OF_LEGS; ++leg)
+  {
+    JsonArray row = savedRows.add<JsonArray>();
+    for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+      row.add(savedSnapshot[leg][joint]);
   }
   String json;
   serializeJson(doc, json);
@@ -207,6 +242,7 @@ esp_err_t command(httpd_req_t *req)
   const char *action = doc["action"];
   Request next;
   if (!strcmp(action, "enter")) next = Request::ENTER;
+  else if (!strcmp(action, "zero")) next = Request::ZERO;
   else if (!strcmp(action, "save")) next = Request::SAVE;
   else if (!strcmp(action, "exit")) next = Request::EXIT;
   else if (!strcmp(action, "move"))
@@ -253,7 +289,7 @@ bool calibration_busy()
   return active.load() || (state.load() != State::IDLE && request.load() != Request::STATUS);
 }
 
-bool calibration_update(bool allowCalibration, void (*move)(byte, byte, short))
+bool calibration_update(bool allowCalibration, CalibrationMoveResult (*move)(byte, byte, short))
 {
   State expected = State::REQUESTED;
   if (state.compare_exchange_strong(expected, State::WORKING))
@@ -267,16 +303,41 @@ bool calibration_update(bool allowCalibration, void (*move)(byte, byte, short))
       {
         memcpy(staged, offsets, sizeof(staged));
         active.store(true);
+        zeroReady = false;
       }
     }
     else if (request != Request::STATUS && !active.load())
       result = "Start calibration first.";
-    else if (request == Request::MOVE)
+    if (!result && (request == Request::ENTER || request == Request::ZERO))
     {
-      staged[requestLeg][requestJoint] = requestOffset;
-      move(requestLeg, requestJoint, requestOffset);
+      zeroReady = false;
+      for (byte leg = 0; leg < NUM_OF_LEGS && !result; ++leg)
+      {
+        for (byte joint = 0; joint < NUM_SERVOS_PER_LEG; ++joint)
+        {
+          CalibrationMoveResult moved = move(leg, joint, staged[leg][joint]);
+          if (moved == CalibrationMoveResult::POWER_UNAVAILABLE)
+            result = "Battery readings unavailable or unsafe; all-servo zero incomplete. Inspect robot, then retry or end calibration.";
+          else if (moved == CalibrationMoveResult::PWM_ERROR)
+            result = "Servo PWM write failed; all-servo zero incomplete and physical positions unknown. Inspect robot, then retry or end calibration.";
+          if (result) break;
+        }
+      }
+      zeroReady = !result;
     }
-    else if (request == Request::SAVE)
+    else if (!result && (request == Request::MOVE || request == Request::SAVE) && !zeroReady)
+      result = "All-servo zero incomplete; inspect robot, then retry or end calibration.";
+    else if (!result && request == Request::MOVE)
+    {
+      CalibrationMoveResult moved = move(requestLeg, requestJoint, requestOffset);
+      if (moved == CalibrationMoveResult::POWER_UNAVAILABLE)
+        result = "Battery readings unavailable or unsafe; servo move blocked.";
+      else if (moved == CalibrationMoveResult::PWM_ERROR)
+        result = "Servo PWM write failed; physical servo position is unknown.";
+      else
+        staged[requestLeg][requestJoint] = requestOffset;
+    }
+    else if (!result && request == Request::SAVE)
     {
       if (!storageReady) result = "Calibration EEPROM unavailable; offsets not saved.";
       else
@@ -291,10 +352,15 @@ bool calibration_update(bool allowCalibration, void (*move)(byte, byte, short))
         else memcpy(offsets, staged, sizeof(offsets));
       }
     }
-    else if (request == Request::EXIT)
+    else if (!result && request == Request::EXIT)
+    {
       active.store(false);
+      zeroReady = false;
+    }
     snapshotActive = active.load();
+    snapshotReady = zeroReady;
     memcpy(snapshot, snapshotActive ? staged : offsets, sizeof(snapshot));
+    memcpy(savedSnapshot, offsets, sizeof(savedSnapshot));
     state.store(State::DONE);
   }
   return active.load();

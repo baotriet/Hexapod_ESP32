@@ -30,6 +30,19 @@ void servo_setAngle(byte legNr, byte joint, int ServoAngle)
   }
 }
 
+bool servo_setAngleImmediate(byte legNr, byte joint, int ServoAngle)
+{
+  if (legNr >= NUM_OF_LEGS || joint >= NUM_SERVOS_PER_LEG ||
+      ServoAngle < -900 || ServoAngle > 900)
+  {
+    Serial.println(F("Servo: invalid immediate angle or joint."));
+    return false;
+  }
+  int mapped = map(ServoAngle, -900, 900, MIN_PULSE, MAX_PULSE);
+  return drvPwm_setImmediate(legNr < NUM_LEGS_PER_SIDE ? R_DRIVER : L_DRIVER,
+                             servoCh[legNr][joint], mapped);
+}
+
 void servo_stop(byte legNr, byte joint)
 {
   byte servoNr = legNr * NUM_SERVOS_PER_LEG + joint;
