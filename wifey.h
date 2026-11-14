@@ -1,13 +1,12 @@
-#ifndef WIFI_H_   /* Include guard */
+#ifndef WIFI_H_ /* Include guard */
 #define WIFI_H_
-
-#define WIFI_SSID "Stofa07897"
-#define WIFI_PSSW "gav47titte05"
 
 /**
  * @brief Initialize wifi module
- * 
+ *
  */
 void wifi_init();
+bool wifi_ready();
+void wifi_update(bool allowConfiguration);
 
-#endif //WIFI_H_
+#endif // WIFI_H_

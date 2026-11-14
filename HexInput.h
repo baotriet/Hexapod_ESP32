@@ -28,7 +28,7 @@
 #define INPUT_OPT_R2 0x1000
 #define INPUT_BODY_BALANCE 0x2000
 #define INPUT_CAMERA_TOGGLE 0x4000
-#define INPUT_TIP_SENSOR 0x8000
+#define INPUT_TIP_SENSOR 0x8000 // Press edge toggles walking contact protection while settled.
 
 // Byte 3 Lx
 // Byte 4 Ly
