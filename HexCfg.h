@@ -224,8 +224,8 @@
 
 #define DEFINE_HEX_GLOBALS
 
-// Lets try some multi leg positions depending on height settings.
-#if 1 // Start first without...
+// Height presets and motion limits.
+#if 1
 #define CNT_HEX_INITS 4
 // Operator-selected lifts: keep creep/fallback below normal lift; these are not validated
 // envelopes.
@@ -273,7 +273,7 @@ const byte g_abHexMaxBodyY[] PROGMEM = {CREEP_BODY_Y_MM, 56, 65, MAX_BODY_Y};
 extern const byte g_abHexIntXZ[];
 extern const byte g_abHexMaxBodyY[];
 #endif
-#endif // if 0
+#endif // Height presets and motion limits.
 
 #define CONTROL_MODE 4
 #define GAIT_TYPE 6

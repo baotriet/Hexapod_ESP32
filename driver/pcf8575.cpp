@@ -6,6 +6,7 @@
 #include "serialOutput.h"
 
 Adafruit_PCF8575 pcf;
+static constexpr uint8_t PCF8575_P10 = 8;
 
 #define ARDUINO_IRQ 16 // make sure this pin is possible to make IRQ input
 
@@ -26,7 +27,7 @@ void pcf8575_init()
   {
     pcf.pinMode(i, INPUT);
   }
-  pcf.digitalWrite(P10, HIGH);
+  pcf.digitalWrite(PCF8575_P10, HIGH);
   // set up the interrupt pin on IRQ signal toggle
 #ifdef FOOT_SENSOR_INT_ENABLED
   pinMode(ARDUINO_IRQ, INPUT);
