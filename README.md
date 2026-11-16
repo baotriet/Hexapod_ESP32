@@ -3,6 +3,7 @@
 ESP32-CAM firmware for a six-legged robot. It provides servo-based leg motion,
 a browser controller over Wi-Fi, camera streaming, and optional sensor-assisted
 stability and foot-contact features.
+https://youtube.com/playlist?list=PLChueof2w0Pg&si=ozY5G9eBqP_QdN1l
 
 ## Features
 
