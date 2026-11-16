@@ -77,6 +77,6 @@ network and do not expose it to the public internet.
 - [ESP32 shield schematic](schematic/ESP32_shield.png)
 - [PCA9685 schematic](schematic/PCA9685.png)
 - [CAD models](CAD/)
-
+- [Gerber files](Gerber/)
 Check wiring, power requirements, and servo limits for your build before
 operating the robot.
